@@ -1,0 +1,9 @@
+# machine-local — never commit
+.claude-state.json
+.pipeline-off
+.ts-arch-off
+.secret-scan-off
+*.phalanx.bak.*
+*.bak
+.DS_Store
+node_modules/

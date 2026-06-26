@@ -1,0 +1,38 @@
+{
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": { "source": { "source": "github", "repo": "anthropics/claude-plugins-official" } },
+    "knowledge-work-plugins": { "source": { "source": "github", "repo": "anthropics/knowledge-work-plugins" } },
+    "rvdbreemen-adr-kit": { "source": { "source": "github", "repo": "rvdbreemen/adr-kit" } },
+    "ponytail": { "source": { "source": "github", "repo": "DietrichGebert/ponytail" } }
+  },
+  "enabledPlugins": {
+    "product-management@knowledge-work-plugins": true,
+    "adr-kit@rvdbreemen-adr-kit": true,
+    "frontend-design@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "ponytail@ponytail": true
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          { "type": "command", "command": "\"__CLAUDE_DIR__/caveman-anchor.sh\"", "timeout": 5 },
+          { "type": "command", "command": "\"__CLAUDE_DIR__/app-pipeline-anchor.sh\"", "timeout": 5 },
+          { "type": "command", "command": "\"__CLAUDE_DIR__/ts-arch-anchor.sh\"", "timeout": 5 },
+          { "type": "command", "command": "\"__CLAUDE_DIR__/phase-anchor.sh\"", "timeout": 5 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Skill|Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/pipeline-gate.js\"", "timeout": 10 },
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/effect-ca-gate.js\"", "timeout": 10 },
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/secret-gate.js\"", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}
