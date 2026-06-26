@@ -117,7 +117,7 @@ Goal: find + do work w/o the user picking tasks; spawn subagents until done; kee
 - Driver = `orchestrator` subagent (agents/orchestrator.md): dispatcher only, never reads big files / never edits. Decompose → spawn workers → verify → check off → next.
 - Workers: `researcher` (read-only maps), `implementer` (one module), `verifier` (build/test/lint). Each returns ≤200 words; their ctx dies with them so the driver stays thin. That is HOW the 45% ceiling holds.
 - Auto-start: the `work-autostart` SessionStart hook injects the start instruction when a repo has open TASKS.md items — no command needed. The `work-respawn` Stop hook continues the loop across turns (works in Desktop without an external process).
-- Ceiling = 45% of the model window via `context-budget` PostToolUse hook. WARN 38%, TRIP 45% (writes RESPAWN to PROGRESS.md → checkpoint, /clear, resume). Estimate from transcript size — advisory proxy, treat as a real limit.
+- Ceiling = 45% of the model window via `context-budget` PostToolUse hook. WARN 38%, TRIP 45% (writes RESPAWN to PROGRESS.md → checkpoint, /clear, resume). Estimate from transcript size — advisory proxy, treat as a real limit. Loop sessions only — silent when no open TASKS.md.
 - Checkpoint = `<project>/PROGRESS.md`. `BLOCKED: <reason>` halts the loop for the human.
 - Git: branch per task `task/<slug>`, commit (caveman-commit), push, open PR. Never merge to main. Bound by the pipeline gate (verify before commit).
 - Kill switches: `touch <repo>/.work-off` (this repo) or `touch <CLAUDE_DIR>/.work-off` (everywhere). Override: "stop loop".
