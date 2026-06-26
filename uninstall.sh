@@ -15,13 +15,21 @@ done
 
 echo "==> removing hooks + templates"
 rm -f "$CLAUDE_DIR"/caveman-anchor.sh "$CLAUDE_DIR"/app-pipeline-anchor.sh \
-      "$CLAUDE_DIR"/ts-arch-anchor.sh "$CLAUDE_DIR"/phase-anchor.sh \
+      "$CLAUDE_DIR"/ts-arch-anchor.sh "$CLAUDE_DIR"/phase-anchor.sh "$CLAUDE_DIR"/phalanx-selfupdate.sh \
       "$CLAUDE_DIR"/pipeline-gate.js "$CLAUDE_DIR"/effect-ca-gate.js "$CLAUDE_DIR"/secret-gate.js
 echo "==> removing autonomous-loop artifacts"
 rm -f "$CLAUDE_DIR"/context-budget.js "$CLAUDE_DIR"/work-autostart.js "$CLAUDE_DIR"/work-intent.js "$CLAUDE_DIR"/work-respawn.js \
       "$CLAUDE_DIR"/run-work.sh "$CLAUDE_DIR"/run-work.ps1 "$CLAUDE_DIR"/TASKS.template.md
 rm -rf "$CLAUDE_DIR/agents" "$CLAUDE_DIR/commands"
 rm -rf "$CLAUDE_DIR/phalanx-templates"
+
+echo "==> leak guard teardown (private denylist .phalanx-leakwords is LEFT in place)"
+if [ "$(git config --global --get core.hooksPath 2>/dev/null)" = "$CLAUDE_DIR/githooks" ]; then
+  git config --global --unset core.hooksPath 2>/dev/null || true
+  echo "    unset core.hooksPath"
+fi
+rm -rf "$CLAUDE_DIR/githooks"
+rm -f "$CLAUDE_DIR/.phalanx-update.stamp" "$CLAUDE_DIR/.phalanx-update.lock"
 
 echo "==> removing daily auto-update cron (if present)"
 if command -v crontab >/dev/null 2>&1; then
