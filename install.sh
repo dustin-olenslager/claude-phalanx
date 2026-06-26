@@ -50,7 +50,13 @@ node "$HERE/scripts/merge-claude-md.mjs" "$CLAUDE_DIR/CLAUDE.md" "$HERE/claude-m
 
 echo "==> settings.json (merge marketplaces + plugins + hooks)"
 [ -f "$SETTINGS" ] && cp "$SETTINGS" "$SETTINGS.phalanx.bak.$(date +%s 2>/dev/null || echo bak)" 2>/dev/null || true
-node "$HERE/scripts/merge-settings.mjs" "$SETTINGS" "$HERE/settings/fragment.json" "$CLAUDE_DIR"
+# Hook-command base path. If CLAUDE_DIR is the home default, write "$HOME/.claude"
+# so the hooks resolve in any container/user that mounts the same dir at a
+# different path (e.g. a shared mount). Override with PHALANX_HOOK_BASE.
+if [ -n "${PHALANX_HOOK_BASE:-}" ]; then HOOK_BASE="$PHALANX_HOOK_BASE"
+elif [ "$CLAUDE_DIR" = "$HOME/.claude" ]; then HOOK_BASE='$HOME/.claude'
+else HOOK_BASE="$CLAUDE_DIR"; fi
+node "$HERE/scripts/merge-settings.mjs" "$SETTINGS" "$HERE/settings/fragment.json" "$HOOK_BASE"
 
 echo "==> validate (node --check + JSON parse)"
 node --check "$CLAUDE_DIR/pipeline-gate.js"

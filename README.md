@@ -30,6 +30,11 @@ Gates + plugins activate on the **next** session; skills are usable immediately.
 
 Install as a **git checkout** (above) so updates are a `git pull`.
 
+When `CLAUDE_DIR` is your home default (`~/.claude`), `install.sh` writes hook
+commands as `$HOME/.claude/...` so they resolve even if the same config dir is
+mounted at different paths for different users/containers (a shared mount).
+Override with `PHALANX_HOOK_BASE=/abs/path` if you need a fixed absolute base.
+
 ## Staying current
 
 Phalanx is the canonical source; track it with a daily cron (chosen update mode):
