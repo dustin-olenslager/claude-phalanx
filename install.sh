@@ -73,7 +73,11 @@ rm -rf "/tmp/phalanx-pipeline/$SID" "/tmp/phalanx-tsarch/$SID" 2>/dev/null || tr
 # assembled at runtime so no AWS-key-shaped literal ships in source (clean for downstream secret scanners)
 LEAK="AKIA""Z3QJ5K7N2WX4Y6PB"
 
-fire() { echo "$2" | node "$CLAUDE_DIR/$1"; }
+# Run gates from an isolated temp dir so live OFF-switch files (.pipeline-off etc.)
+# and the operator's runtime env don't skew the logic self-test.
+TG="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-tg)"; mkdir -p "$TG"
+cp "$CLAUDE_DIR"/pipeline-gate.js "$CLAUDE_DIR"/effect-ca-gate.js "$CLAUDE_DIR"/secret-gate.js "$TG/" 2>/dev/null || true
+fire() { echo "$2" | PHALANX_WARN= node "$TG/$1"; }
 expect_deny() { case "$3" in *'"permissionDecision":"deny"'*) echo "    PASS $1";; *) echo "    FAIL $1 (expected deny) got: $3"; FAIL=1;; esac; }
 expect_allow() { if [ -z "$3" ]; then echo "    PASS $1"; else echo "    FAIL $1 (expected allow/empty) got: $3"; FAIL=1; fi; }
 
@@ -132,7 +136,7 @@ else
   echo "    SKIP secret:commit-* (git not installed)"
 fi
 
-rm -rf "/tmp/phalanx-pipeline" "/tmp/phalanx-tsarch" 2>/dev/null || true
+rm -rf "/tmp/phalanx-pipeline" "/tmp/phalanx-tsarch" "$TG" 2>/dev/null || true
 if [ "$FAIL" -ne 0 ]; then echo "==> SELF-TEST FAILED"; exit 1; fi
 
 # ---- optional daily auto-update cron ----------------------------------------
