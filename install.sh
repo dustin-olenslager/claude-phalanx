@@ -213,6 +213,10 @@ printf '# T\n- [ ] do the migration cutover flip; facts wont be in memory_entrie
 o=$(printf '{"cwd":"%s"}' "$WADIR" | node "$WAJ"); case "$o" in *data-risk*) echo "    PASS autostart:risk-trips";; *) echo "    FAIL autostart:risk-trips got: $o"; FAIL=1;; esac
 printf '# T\n- [ ] add a blue button\n' > "$WADIR/TASKS.md"
 o=$(printf '{"cwd":"%s"}' "$WADIR" | node "$WAJ"); case "$o" in *data-risk*) echo "    FAIL autostart:safe-falsetrip"; FAIL=1;; *) echo "    PASS autostart:safe-quiet";; esac
+# v1.4.1: a risk flag in PROGRESS.md (with a SAFE TASKS.md) must still trip.
+printf '# T\n- [ ] add a blue button\n' > "$WADIR/TASKS.md"
+printf '# PROGRESS\n<!-- note: graphiti-only facts since 2026-05-28 will not be in memory_entries post-flip (data-continuity) -->\n' > "$WADIR/PROGRESS.md"
+o=$(printf '{"cwd":"%s"}' "$WADIR" | node "$WAJ"); case "$o" in *data-risk*) echo "    PASS autostart:risk-in-progress";; *) echo "    FAIL autostart:risk-in-progress got: $o"; FAIL=1;; esac
 rm -rf "$WADIR"
 
 # items 1+6 supervisor loop drains a backlog across fresh passes (stub claude),
