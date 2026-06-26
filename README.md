@@ -106,15 +106,16 @@ gates are conveniences with documented off-switches, not a sandbox.
 
 `install.sh` installs a git **leak guard** by default (`PHALANX_NO_GUARDS=1` to skip):
 
-- a global `pre-push` hook (via `core.hooksPath` → `~/.claude/githooks`) that **blocks any
-  push** containing secrets (AWS/GCP keys, private keys, GitHub/Slack/Stripe/MCP tokens,
-  hardcoded credential assignments) — for *every* repo you push from;
-- for pushes to the **public claude-phalanx repo specifically**, it also blocks any added
-  line matching your **local denylist** at `~/.claude/.phalanx-leakwords` (one term/ERE per
-  line). **That file is never committed** — it holds your private infra hostnames, internal
-  paths, client/project names, private emails. The repo ships only a generic stub. Do NOT
-  add things already public by design (your repo URL, your LICENSE name) or every push blocks;
-- a `pre-commit` secret scan (stops a credential before it is even committed);
+- a `pre-push` hook (installed globally via `core.hooksPath` → `~/.claude/githooks`, but
+  **scoped to act ONLY on the claude-phalanx remote** — your other/private repos are never
+  touched) that **blocks any push** to the public repo containing secrets (AWS/GCP keys,
+  private keys, GitHub/Slack/Stripe/MCP tokens, hardcoded credential assignments) OR any
+  added line matching your **local denylist** at `~/.claude/.phalanx-leakwords` (one term/ERE
+  per line). **That denylist is never committed** — it holds your private infra hostnames,
+  internal paths, client/project names, private emails. The repo ships only a generic stub.
+  Do NOT add things already public by design (your repo URL, your LICENSE name) or every
+  push blocks;
+- a `pre-commit` secret scan, also scoped to claude-phalanx checkouts (via origin);
 - a server-side **gitleaks GitHub Action** (`.github/workflows/secret-scan.yml`) backstop for
   anything pushed from an un-guarded clone.
 

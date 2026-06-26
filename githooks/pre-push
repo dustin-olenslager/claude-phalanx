@@ -15,6 +15,10 @@ Z=0000000000000000000000000000000000000000
 is_public=0
 case "$REMOTE_URL" in *claude-phalanx*) is_public=1 ;; esac
 
+# Scope: this guard ONLY governs pushes to the public claude-phalanx repo, so it
+# never interferes with your other (private) repositories' workflows.
+[ "$is_public" = 1 ] || exit 0
+
 SECRET_RE='AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|sk_live_[0-9a-zA-Z]{16,}|AIza[0-9A-Za-z_-]{35}|sk_mt_[0-9A-Za-z]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|(api[_-]?key|secret|token|password|passwd|client[_-]?secret|access[_-]?token)["'"'"' ]*[:=]["'"'"' ]*["'"'"'][^"'"'"']{16,}["'"'"']'
 SECRET_ALLOW='process\.env|import\.meta\.env|os\.environ|getenv|Deno\.env|YOUR_|REPLACE|EXAMPLE|placeholder|xxxx|\$\{|noreply'
 

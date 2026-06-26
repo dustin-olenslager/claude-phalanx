@@ -4,6 +4,13 @@
 # pre-push (it needs the remote URL). Bypass: git commit --no-verify.
 set -uo pipefail
 
+# Scope: only guard commits in a claude-phalanx checkout (matched via origin),
+# so private repos' commit workflows are untouched.
+case "$(git config --get remote.origin.url 2>/dev/null)" in
+  *claude-phalanx*) ;;
+  *) exit 0 ;;
+esac
+
 SECRET_RE='AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|sk_live_[0-9a-zA-Z]{16,}|AIza[0-9A-Za-z_-]{35}|sk_mt_[0-9A-Za-z]{20,}|(api[_-]?key|secret|token|password|passwd|client[_-]?secret|access[_-]?token)["'"'"' ]*[:=]["'"'"' ]*["'"'"'][^"'"'"']{16,}["'"'"']'
 SECRET_ALLOW='process\.env|import\.meta\.env|os\.environ|getenv|Deno\.env|YOUR_|REPLACE|EXAMPLE|placeholder|xxxx|\$\{|noreply'
 
