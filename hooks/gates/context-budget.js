@@ -4,6 +4,9 @@
 // session transcript and, when it crosses CEILING of the model window, writes a
 // RESPAWN directive to <project>/PROGRESS.md so the orchestrator checkpoints and
 // a fresh session resumes. Never blocks a tool -- advisory via additionalContext.
+// Loop sessions only: silent unless the cwd repo has open TASKS.md items.
+// One-shot (PHALANX_ONESHOT=1, e.g. the Telegram bot): WARN inline only, never
+// write a RESPAWN marker -- there is no fresh-session resumer there.
 const fs = require("fs");
 const path = require("path");
 
@@ -11,6 +14,7 @@ const WINDOW_TOKENS = 200000; // 200k window
 const CEILING = 0.45;         // never exceed 45%
 const WARN = 0.38;            // early nudge to start wrapping the current unit
 const CHARS_PER_TOKEN = 3.5;  // conservative estimate
+const ONESHOT = process.env.PHALANX_ONESHOT === "1";
 
 function readInput() {
   try { return JSON.parse(fs.readFileSync(0, "utf8") || "{}"); }
@@ -50,6 +54,9 @@ const progress = path.join(cwd, "PROGRESS.md");
 const pct = (frac * 100).toFixed(0);
 
 if (frac >= CEILING) {
+  if (ONESHOT) {
+    emit(`CONTEXT CEILING HIT (~${pct}% >= 45%) on a one-shot run. Wrap up the current task and report now; do not start more work. (No RESPAWN written -- no resumer in one-shot mode.)`);
+  }
   const line = `\n<!-- RESPAWN ${new Date().toISOString()} ctx~${pct}% -- checkpoint state above, STOP, resume fresh -->\n`;
   try {
     if (!fs.existsSync(progress)) fs.writeFileSync(progress, "# PROGRESS\n");

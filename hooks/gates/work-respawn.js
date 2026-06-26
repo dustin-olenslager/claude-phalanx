@@ -3,6 +3,9 @@
 // Stop hook: in-session respawn driver. When Claude finishes a turn during an
 // active loop, decide whether to continue. Works in Desktop/CLI/IDE alike -- no
 // external process needed.
+// One-shot (PHALANX_ONESHOT=1, e.g. the Telegram bot): suppressed entirely --
+// the orchestrator's in-run loop drives the single seeded task to green within
+// one run; no cross-turn continuation, no backlog walking.
 const fs = require("fs");
 const path = require("path");
 
@@ -20,6 +23,9 @@ function readInput() {
 
 const input = readInput();
 const cwd = input.cwd || process.cwd();
+
+const ONESHOT = process.env.PHALANX_ONESHOT === "1";
+if (ONESHOT) stop();
 
 // Guard against infinite loops.
 if (input.stop_hook_active) stop();
@@ -56,6 +62,7 @@ if (respawn) {
 
 cont(
   `Autonomous loop still active -- ${open} open task(s) remain in TASKS.md. ` +
-  `Continue: pull the next unchecked task and work it to green. Do not stop to ask unless genuinely BLOCKED ` +
+  `Finish ONLY the task you are on and its verify; do not start another backlog item mid-turn. ` +
+  `When it is green and checked off, pull the next. Do not stop to ask unless genuinely BLOCKED ` +
   `(then write BLOCKED: <reason> to PROGRESS.md). No end-of-turn summary -- keep working.`
 );

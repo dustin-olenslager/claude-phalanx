@@ -25,6 +25,13 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/work-intent.js\"", "timeout": 5 }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Skill|Bash|Edit|Write|MultiEdit|NotebookEdit",

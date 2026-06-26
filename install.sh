@@ -67,7 +67,7 @@ else HOOK_BASE="$CLAUDE_DIR"; fi
 node "$HERE/scripts/merge-settings.mjs" "$SETTINGS" "$HERE/settings/fragment.json" "$HOOK_BASE"
 
 echo "==> validate (node --check + JSON parse)"
-for g in pipeline-gate effect-ca-gate secret-gate context-budget work-autostart work-respawn; do
+for g in pipeline-gate effect-ca-gate secret-gate context-budget work-autostart work-intent work-respawn; do
   node --check "$CLAUDE_DIR/$g.js" && echo "    node --check $g.js ok"
 done
 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$SETTINGS"
@@ -128,6 +128,15 @@ o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\
 # secret-gate WRITE-TIME
 o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/proj/c.ts\",\"content\":\"const k='$LEAK'\"},\"session_id\":\"s\"}"); expect_deny "secret:write-aws-key" x "$o"
 o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/proj/c.ts\",\"content\":\"const k=process.env.API_KEY\"},\"session_id\":\"s\"}"); expect_allow "secret:write-env-ref" x "$o"
+
+# work-intent (UserPromptSubmit): speaks on code-intent, silent on read-only + under .work-off
+wi() { echo "$1" | node "$CLAUDE_DIR/work-intent.js"; }
+mkdir -p /tmp/phalanx-wi 2>/dev/null; rm -f /tmp/phalanx-wi/.work-off /tmp/phalanx-wi/TASKS.md
+o=$(wi "{\"prompt\":\"add a retry to the fetch call\",\"cwd\":\"/tmp/phalanx-wi\"}"); case "$o" in *Phalanx*) echo "    PASS intent:code-speaks";; *) echo "    FAIL intent:code-speaks got: $o"; FAIL=1;; esac
+o=$(wi "{\"prompt\":\"why is the test failing?\",\"cwd\":\"/tmp/phalanx-wi\"}"); [ -z "$o" ] && echo "    PASS intent:question-silent" || { echo "    FAIL intent:question-silent got: $o"; FAIL=1; }
+touch /tmp/phalanx-wi/.work-off
+o=$(wi "{\"prompt\":\"add a retry to the fetch call\",\"cwd\":\"/tmp/phalanx-wi\"}"); [ -z "$o" ] && echo "    PASS intent:work-off-silent" || { echo "    FAIL intent:work-off-silent got: $o"; FAIL=1; }
+rm -rf /tmp/phalanx-wi 2>/dev/null
 
 # secret-gate COMMIT-TIME (needs git)
 if command -v git >/dev/null 2>&1; then

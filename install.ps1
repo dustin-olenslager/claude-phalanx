@@ -57,7 +57,7 @@ if (Test-Path $SETTINGS) { Copy-Item -Force $SETTINGS "$SETTINGS.phalanx.bak" }
 node (Join-Path $HERE 'scripts\merge-settings.mjs') $SETTINGS (Join-Path $HERE 'settings\fragment.json') $CLAUDE_DIR
 
 Write-Host '==> validate'
-foreach ($g in 'pipeline-gate','effect-ca-gate','secret-gate','context-budget','work-autostart','work-respawn') {
+foreach ($g in 'pipeline-gate','effect-ca-gate','secret-gate','context-budget','work-autostart','work-intent','work-respawn') {
   node --check (Join-Path $CLAUDE_DIR "$g.js"); Write-Host "    node --check $g.js ok"
 }
 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' $SETTINGS
