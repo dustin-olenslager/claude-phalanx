@@ -20,7 +20,8 @@
           { "type": "command", "command": "\"__CLAUDE_DIR__/caveman-anchor.sh\"", "timeout": 5 },
           { "type": "command", "command": "\"__CLAUDE_DIR__/app-pipeline-anchor.sh\"", "timeout": 5 },
           { "type": "command", "command": "\"__CLAUDE_DIR__/ts-arch-anchor.sh\"", "timeout": 5 },
-          { "type": "command", "command": "\"__CLAUDE_DIR__/phase-anchor.sh\"", "timeout": 5 }
+          { "type": "command", "command": "\"__CLAUDE_DIR__/phase-anchor.sh\"", "timeout": 5 },
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/work-autostart.js\"", "timeout": 5 }
         ]
       }
     ],
@@ -31,6 +32,21 @@
           { "type": "command", "command": "node \"__CLAUDE_DIR__/pipeline-gate.js\"", "timeout": 10 },
           { "type": "command", "command": "node \"__CLAUDE_DIR__/effect-ca-gate.js\"", "timeout": 10 },
           { "type": "command", "command": "node \"__CLAUDE_DIR__/secret-gate.js\"", "timeout": 10 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Task|Read",
+        "hooks": [
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/context-budget.js\"", "timeout": 10 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/work-respawn.js\"", "timeout": 10 }
         ]
       }
     ]
