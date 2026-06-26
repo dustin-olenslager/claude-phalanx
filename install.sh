@@ -29,7 +29,15 @@ cp -R "$HERE/skills/." "$CLAUDE_DIR/skills/"
 echo "==> hooks (anchors + gates -> CLAUDE_DIR root)"
 cp "$HERE"/hooks/anchors/*.sh "$CLAUDE_DIR/"
 cp "$HERE"/hooks/gates/*.js "$CLAUDE_DIR/"
-chmod +x "$CLAUDE_DIR"/*.sh "$CLAUDE_DIR"/pipeline-gate.js "$CLAUDE_DIR"/effect-ca-gate.js "$CLAUDE_DIR"/secret-gate.js 2>/dev/null || true
+chmod +x "$CLAUDE_DIR"/*.sh "$CLAUDE_DIR"/*.js 2>/dev/null || true
+
+echo "==> agents + commands + work-loop wrappers"
+mkdir -p "$CLAUDE_DIR/agents" "$CLAUDE_DIR/commands"
+cp "$HERE"/agents/*.md "$CLAUDE_DIR/agents/"
+cp "$HERE"/commands/*.md "$CLAUDE_DIR/commands/"
+cp "$HERE"/scripts/run-work.sh "$HERE"/scripts/run-work.ps1 "$CLAUDE_DIR/" 2>/dev/null || true
+cp "$HERE"/TASKS.template.md "$CLAUDE_DIR/" 2>/dev/null || true
+chmod +x "$CLAUDE_DIR/run-work.sh" 2>/dev/null || true
 
 echo "==> templates (state + dependency-cruiser)"
 cp "$HERE"/state/*.json "$CLAUDE_DIR/phalanx-templates/state/"
@@ -59,9 +67,9 @@ else HOOK_BASE="$CLAUDE_DIR"; fi
 node "$HERE/scripts/merge-settings.mjs" "$SETTINGS" "$HERE/settings/fragment.json" "$HOOK_BASE"
 
 echo "==> validate (node --check + JSON parse)"
-node --check "$CLAUDE_DIR/pipeline-gate.js"
-node --check "$CLAUDE_DIR/effect-ca-gate.js"
-node --check "$CLAUDE_DIR/secret-gate.js"
+for g in pipeline-gate effect-ca-gate secret-gate context-budget work-autostart work-respawn; do
+  node --check "$CLAUDE_DIR/$g.js" && echo "    node --check $g.js ok"
+done
 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$SETTINGS"
 echo "    ok"
 
