@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Phalanx leak guard (pre-commit). Fast secret scan of the STAGED diff so a
+# credential never even reaches a commit. Personal-term enforcement happens at
+# pre-push (it needs the remote URL). Bypass: git commit --no-verify.
+set -uo pipefail
+
+SECRET_RE='AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|sk_live_[0-9a-zA-Z]{16,}|AIza[0-9A-Za-z_-]{35}|sk_mt_[0-9A-Za-z]{20,}|(api[_-]?key|secret|token|password|passwd|client[_-]?secret|access[_-]?token)["'"'"' ]*[:=]["'"'"' ]*["'"'"'][^"'"'"']{16,}["'"'"']'
+SECRET_ALLOW='process\.env|import\.meta\.env|os\.environ|getenv|Deno\.env|YOUR_|REPLACE|EXAMPLE|placeholder|xxxx|\$\{|noreply'
+
+added=$(git diff --cached --no-color -U0 | grep -E '^\+' | grep -vE '^\+\+\+' || true)
+[ -n "$added" ] || exit 0
+hits=$(printf '%s\n' "$added" | grep -EnI "$SECRET_RE" | grep -EviI "$SECRET_ALLOW" || true)
+if [ -n "$hits" ]; then
+  echo "PHALANX LEAK GUARD: possible SECRET in staged changes -- commit blocked:"
+  printf '  %s\n' "$hits" | head -12
+  echo "Move it to an env var / secret store. Bypass (discouraged): git commit --no-verify."
+  exit 1
+fi
+exit 0
