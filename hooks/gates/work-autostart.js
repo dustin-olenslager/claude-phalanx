@@ -50,20 +50,29 @@ if (open > 0 && blocked) {
   emit("AUTONOMOUS LOOP paused: PROGRESS.md has a BLOCKED line. Surface the blocker to the user and wait -- do not auto-start.");
 }
 
-// Operator-risk tripwire (item 7): an open task whose text implies an
-// irreversible / destructive / data-continuity change must NOT auto-run. Surface
-// it and make the loop confirm (write BLOCKED) before executing.
+// Operator-risk tripwire (item 7): an open task -- OR a checkpoint note in
+// PROGRESS.md -- implying an irreversible / destructive / data-continuity change
+// must NOT auto-run. Surface it and make the loop confirm (write BLOCKED) first.
+// (v1.4.1: also scan PROGRESS.md, where such flags usually land on a checkpoint.)
 if (open > 0) {
+  const RISK = /(data[- ]?loss|data[- ]?continuity|irreversible|(won'?t|will ?not) be (in|captured)|(can'?t|cannot) be undone|drop\s+(table|column|database)|delete[sd]?\s+prod|destructive|truncate\b|migration cutover|cutover|backfill|\bwipe\b)/i;
   let riskLine = "";
   try {
     const txt = fs.readFileSync(path.join(cwd, "TASKS.md"), "utf8");
-    const RISK = /(data[- ]?loss|irreversible|won'?t be (in|captured)|can'?t be undone|cannot be undone|drop\s+(table|column|database)|delete[sd]?\s+prod|destructive|truncate\b|migration cutover|backfill|\bwipe\b)/i;
     for (const l of txt.split(/\r?\n/)) {
       if (/^\s*-\s*\[\s*\]/.test(l) && RISK.test(l)) { riskLine = l.trim(); break; }
     }
   } catch {}
+  if (!riskLine) {
+    try {
+      const p = fs.readFileSync(path.join(cwd, "PROGRESS.md"), "utf8");
+      for (const l of p.split(/\r?\n/)) {
+        if (RISK.test(l)) { riskLine = l.trim(); break; }
+      }
+    } catch {}
+  }
   if (riskLine) {
-    emit("AUTONOMOUS LOOP: an open task carries a data-risk / irreversible-change flag -- \"" + riskLine.slice(0, 160) + "\". Do NOT auto-execute it. Confirm with the operator; if it is destructive or irreversible, write 'BLOCKED: <reason, needs operator confirm>' to PROGRESS.md and halt. Other safe tasks proceed normally.");
+    emit("AUTONOMOUS LOOP: a data-risk / irreversible-change flag is present (TASKS.md or PROGRESS.md) -- \"" + riskLine.slice(0, 160) + "\". Do NOT auto-execute it. Confirm with the operator; if it is destructive or irreversible, write 'BLOCKED: <reason, needs operator confirm>' to PROGRESS.md and halt. Other safe tasks proceed normally.");
   }
 }
 
