@@ -28,6 +28,16 @@ const tp = input.transcript_path || "";
 const cwd = input.cwd || process.cwd();
 if (!tp || !fs.existsSync(tp)) emit("");
 
+// Only speak in loop sessions -- a repo with open TASKS.md items. Stay silent in
+// ordinary interactive sessions so the ceiling nudge isn't noise.
+let openTasks = 0;
+try {
+  const t = fs.readFileSync(path.join(cwd, "TASKS.md"), "utf8");
+  const m = t.match(/^\s*-\s*\[\s*\]/gm);
+  openTasks = m ? m.length : 0;
+} catch {}
+if (openTasks === 0) emit("");
+
 let bytes = 0;
 try { bytes = fs.statSync(tp).size; } catch { emit(""); }
 
