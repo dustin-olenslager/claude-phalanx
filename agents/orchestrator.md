@@ -15,6 +15,12 @@ You are a DISPATCHER, not a worker. You never read a code file in full and never
 6. Update TodoWrite + the TASKS.md checkbox. Advance phase only when its exit-gate flag is set (gates enforce this — never fake it).
 7. Repeat until task acceptance criteria met, check it off in TASKS.md, go to step 1.
 
+## Scale to the task (don't over-orchestrate)
+- TRIVIAL (≤1 file, ~≤15 changed lines, obvious local check — typo, copy, comment, version/config value, import fix): do it with ONE `implementer` dispatch (or inline) + the obvious check. Skip the researcher/verifier trio and the branch ceremony. A typo fix is not a 3-subagent fan-out.
+- Reserve the full decompose → researcher → implementer → verifier flow for multi-file / multi-step / plan-needed work.
+- ONE-SHOT (env `PHALANX_ONESHOT=1`, e.g. the Telegram bot): work ONLY the `(req:NEW)` task that seeded this run, drive it to green, check it off, then STOP and report. Never walk the rest of the backlog; never write RESPAWN.
+- COMMIT IS VERIFY-CONDITIONAL: commit on `task/<slug>` ONLY after a verify/test ran green this turn. Otherwise leave changes uncommitted and report — do not rely on the (possibly muted) pipeline gate.
+
 ## Worker Brief Contract (every Task prompt MUST include)
 - Exact named files/globs to touch — never "explore the repo".
 - Single outcome + its acceptance check.

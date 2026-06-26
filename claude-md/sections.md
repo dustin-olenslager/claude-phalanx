@@ -111,15 +111,18 @@ over-engineering AND over-simplification. No hand-wavy "looks good". edge-hunter
 finds failure modes; adversary-review grades (SHIP / SHIP-AFTER-FIXES / REWORK /
 INSUFFICIENT-EVIDENCE) with file:line evidence and a fix per finding.
 
-## §17 AUTONOMOUS LOOP (always-on, opt-in via /work or auto-start)
-Goal: find + do work w/o the user picking tasks; spawn subagents until done; keep the DRIVER session under 45% ctx.
-- Backlog = `<project>/TASKS.md` (markdown checklist). Top unchecked `- [ ]` is next. `/work` resumes PROGRESS.md first, then pulls TASKS.md.
-- Driver = `orchestrator` subagent (agents/orchestrator.md): dispatcher only, never reads big files / never edits. Decompose → spawn workers → verify → check off → next.
-- Workers: `researcher` (read-only maps), `implementer` (one module), `verifier` (build/test/lint). Each returns ≤200 words; their ctx dies with them so the driver stays thin. That is HOW the 45% ceiling holds.
-- Auto-start: the `work-autostart` SessionStart hook injects the start instruction when a repo has open TASKS.md items — no command needed. The `work-respawn` Stop hook continues the loop across turns (works in Desktop without an external process).
-- Ceiling = 45% of the model window via `context-budget` PostToolUse hook. WARN 38%, TRIP 45% (writes RESPAWN to PROGRESS.md → checkpoint, /clear, resume). Estimate from transcript size — advisory proxy, treat as a real limit. Loop sessions only — silent when no open TASKS.md.
+## §17 AUTONOMOUS LOOP (always-on; DEFAULT engine for all code work)
+Goal: every coding activity runs through the loop+orchestrator automatically — the request IS the task, the operator never hand-creates TASKS.md. Read-only/conversational asks answer normally. Keep the DRIVER session under 45% ctx.
+- TRIGGER (outcome, not phrasing): a request fires the loop iff completing it REQUIRES creating/modifying/deleting a repo file (code, test, config, schema, build, infra-as-code, shipped docs). A terse imperative ("fix the bug", "bump the dep", "rename X") IS a complete task — seed it verbatim. Words-only answers (explain, opinion, plan, review, yes/no, a snippet shown but not written) do NOT trigger. DIAGNOSTIC->FIX: answer "why/what/is" read-only first; the apply-the-fix request is the seed.
+- AUTO-SEED: on a triggering request, FIRST append it as `- [ ] (req:NEW) <request>` to `TASKS.md` at the repo root (`git rev-parse --show-toplevel`, not necessarily cwd; create the file if missing), THEN drive it. Backlog = that checklist; top unchecked `- [ ]` is next. `/work` resumes PROGRESS.md first.
+- TRIVIAL FAST-PATH: a single-file edit under ~15 changed lines with an obvious local check (typo, copy, comment, version/config value, import fix) runs INLINE — no TASKS.md, no orchestrator, no branch. Reserve the loop for multi-file / multi-step / plan-needed / branch-worthy work. Per-request opt-out: "inline" / "quick fix" / "no loop".
+- Driver = `orchestrator` subagent (agents/orchestrator.md): dispatcher only, never reads big files / never edits. Decompose -> spawn workers -> verify -> check off -> next.
+- Workers: `researcher` (read-only maps), `implementer` (one module), `verifier` (build/test/lint). Each returns <=200 words; their ctx dies with them so the driver stays thin. That is HOW the 45% ceiling holds.
+- Delivery: the `work-autostart` SessionStart hook injects the standing rule (or resumes when TASKS.md has open items, or pauses on a BLOCKED line). The `work-intent` UserPromptSubmit hook re-anchors it terse per prompt (silent on read-only/conversational prompts and under .work-off). The `work-respawn` Stop hook continues the loop across turns in Desktop.
+- COMMIT IS VERIFY-CONDITIONAL: commit on `task/<slug>` ONLY if a verify/test ran green THIS turn; otherwise leave changes uncommitted and report. The loop self-polices even when the global pipeline gate is muted (`.pipeline-off`) — it does NOT inherit that leniency for its own commits. Never merge to main.
+- Ceiling = 45% of the model window via `context-budget` PostToolUse hook. WARN 38%, TRIP 45% (writes RESPAWN to PROGRESS.md -> checkpoint, /clear, resume). Estimate from transcript size — advisory proxy, treat as a real limit. Loop sessions only — silent when no open TASKS.md.
 - Checkpoint = `<project>/PROGRESS.md`. `BLOCKED: <reason>` halts the loop for the human.
-- Git: branch per task `task/<slug>`, commit (caveman-commit), push, open PR. Never merge to main. Bound by the pipeline gate (verify before commit).
+- ONE-SHOT SAFETY: on a non-interactive run (`PHALANX_ONESHOT=1`, e.g. the Telegram bot) the loop seeds and drives ONLY the current request's task — never the whole backlog — and never writes RESPAWN (no fresh-session resumer exists there). The respawn Stop hook is suppressed under one-shot; multi-pass autonomy is `run-work.sh` territory only. (Requires `PHALANX_ONESHOT=1` wired into the bot container env alongside `PHALANX_WARN=1`, and the matching one-shot guards in work-respawn.js + context-budget.js.)
 - Kill switches: `touch <repo>/.work-off` (this repo) or `touch <CLAUDE_DIR>/.work-off` (everywhere). Override: "stop loop".
 - Outer loop (optional, terminal walk-away): `scripts/run-work.sh` / `run-work.ps1` re-invokes `/work` in fresh processes until backlog empty / BLOCKED / MaxPasses.
 <!-- PHALANX:END -->

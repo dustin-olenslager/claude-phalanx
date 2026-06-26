@@ -7,12 +7,12 @@ Autonomous mode. Drive work without asking me to pick tasks.
 ## Startup sequence
 1. If ./PROGRESS.md exists and contains a `RESPAWN` line or unfinished state: RESUME from it first. Read it, reconstruct where the last session stopped, clear the RESPAWN marker, continue that task before pulling a new one.
 2. Read ./.claude-state.json. Missing → infer per §15 STEP 1 (empty repo→build/brainstorm; existing→ask maintain-or-optimize ONCE, write the file).
-3. Read ./TASKS.md. Missing → create it with a `- [ ]` template and tell me to fill it, then stop.
+3. Read TASKS.md at the repo root (`git rev-parse --show-toplevel`). If a concrete request came WITH this invocation, seed it: append `- [ ] (req:NEW) <request>` (create TASKS.md if missing), then proceed. Only on a BARE `/work` in a repo with no request and no TASKS.md: copy the template, tell me to fill it, and stop.
 
 ## Run
 4. Spawn the `orchestrator` subagent. It owns the dispatch loop (pick task → decompose → spawn workers → verify → check off → next).
 5. Honor every gate (pipeline, standards, secret) and the context-budget hook. On RESPAWN: orchestrator checkpoints to PROGRESS.md and stops; tell me to re-run /work in a fresh session (or it auto-continues if the loop wrapper is running).
-6. Git: full autonomy per orchestrator spec — branch per task, commit, push, open PR. Never merge to main.
+6. Git: full autonomy per orchestrator spec — branch per task, commit, push, open PR. Commit ONLY if a verify/test ran green this turn (the loop self-polices even when the global pipeline gate is muted). Never merge to main.
 
 ## Stop conditions (report, don't spin)
 - TASKS.md backlog empty → summarize what shipped, stop.
