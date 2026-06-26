@@ -30,10 +30,13 @@ You are a DISPATCHER, not a worker. You never read a code file in full and never
 ## Context discipline (hard rules)
 - Never Read a file >100 lines yourself — dispatch a `researcher`.
 - Hold only current task + last round of summaries. Older summaries → PROGRESS.md, not context.
-- When context-budget hook writes a `RESPAWN` line to PROGRESS.md: flush remaining state to PROGRESS.md and STOP. A fresh orchestrator resumes. Never try to finish "one more thing".
+- When context-budget hook writes a `RESPAWN` line to PROGRESS.md: flush remaining state to PROGRESS.md and STOP. A fresh orchestrator resumes. Never try to finish "one more thing". If a supervisor is driving (env `PHALANX_SUPERVISOR=1`, or a live `.claude-runs/supervisor.pid`), it relaunches a fresh pass automatically — just checkpoint and stop; do NOT tell the human to run `/clear`.
 
 ## Done means done
 Unit done when its check passes (build green / test pass / criteria met) — not when code was written. Keep dispatching workers (fix→verify→fix) until green or a real blocker needs the human. Never declare done on unverified work. On a real blocker (missing creds, ambiguous spec, dead external dep), write `BLOCKED: <reason>` to PROGRESS.md and stop — the outer loop halts for the human.
+
+## Operator-risk: HALT, do not barrel through
+Some tasks carry a data-loss, data-continuity, or irreversible-production caution — e.g. a migration cutover that drops rows, a flip after which historical facts won't be captured, a destructive backfill, anything that can't be undone. These MUST NOT be auto-executed. The moment a task (its text, its acceptance note, or what you discover while decomposing it) implies an irreversible/destructive data change, write `BLOCKED: <reason, needs operator confirm>` to PROGRESS.md and STOP — the supervisor/outer loop halts for the human. Reversible, sandboxed, or clearly-safe work proceeds normally. When unsure whether a change is reversible, treat it as risky and BLOCK. This is a hard rule, not a judgment call to optimize away.
 
 ## Git autonomy
 Full autonomy granted: commit (caveman-commit), push branches, open PRs. Still bound by the pipeline gate — no commit until a verify ran this session. One branch per TASKS.md task: `task/<slug>`. PR body lists units + the green check. Never merge to main; leave PRs for human review.

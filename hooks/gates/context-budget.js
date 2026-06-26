@@ -27,6 +27,18 @@ function emit(ctx) {
   process.exit(0);
 }
 
+// A supervisor (run-work.sh) IS an external fresh-process resumer: when one is
+// driving, a ceiling hit must checkpoint + exit, NEVER tell a human to /clear.
+// Detected by the env the supervisor exports to each pass, or a live pidfile.
+function supervisorActive(dir) {
+  if (process.env.PHALANX_SUPERVISOR === "1") return true;
+  try {
+    const pid = parseInt(fs.readFileSync(path.join(dir, ".claude-runs", "supervisor.pid"), "utf8").trim(), 10);
+    if (pid > 0) { process.kill(pid, 0); return true; }
+  } catch {}
+  return false;
+}
+
 const input = readInput();
 const tp = input.transcript_path || "";
 const cwd = input.cwd || process.cwd();
@@ -54,15 +66,26 @@ const progress = path.join(cwd, "PROGRESS.md");
 const pct = (frac * 100).toFixed(0);
 
 if (frac >= CEILING) {
-  if (ONESHOT) {
-    emit(`CONTEXT CEILING HIT (~${pct}% >= 45%) on a one-shot run. Wrap up the current task and report now; do not start more work. (No RESPAWN written -- no resumer in one-shot mode.)`);
+  const SUP = supervisorActive(cwd);
+  // Write the RESPAWN checkpoint marker only when a resumer exists: a supervisor
+  // pass (relaunched fresh) OR an interactive session (a human reopens). NEVER
+  // under a bare one-shot run (no resumer) -- keeps the item-6 invariant.
+  const willResume = SUP || !ONESHOT;
+  if (willResume) {
+    const line = `\n<!-- RESPAWN ${new Date().toISOString()} ctx~${pct}% -- checkpoint state above, STOP, resume fresh -->\n`;
+    try {
+      if (!fs.existsSync(progress)) fs.writeFileSync(progress, "# PROGRESS\n");
+      const tail = fs.readFileSync(progress, "utf8").slice(-400);
+      if (!/RESPAWN/.test(tail)) fs.appendFileSync(progress, line);
+    } catch {}
   }
-  const line = `\n<!-- RESPAWN ${new Date().toISOString()} ctx~${pct}% -- checkpoint state above, STOP, resume fresh -->\n`;
-  try {
-    if (!fs.existsSync(progress)) fs.writeFileSync(progress, "# PROGRESS\n");
-    const tail = fs.readFileSync(progress, "utf8").slice(-400);
-    if (!/RESPAWN/.test(tail)) fs.appendFileSync(progress, line);
-  } catch {}
+  if (SUP) {
+    // The supervisor relaunches a fresh `claude -p` pass that reads PROGRESS.md.
+    emit(`CONTEXT CEILING HIT (~${pct}% >= 45%). Checkpoint remaining task state to PROGRESS.md NOW and STOP this pass -- the supervisor will relaunch a fresh pass that resumes from PROGRESS.md. No human action needed; do not tell anyone to reset context manually.`);
+  }
+  if (ONESHOT) {
+    emit(`CONTEXT CEILING HIT (~${pct}% >= 45%) on a one-shot run with no supervisor. Wrap up the current task and report now; do not start more work. (No RESPAWN written -- no resumer in one-shot mode.)`);
+  }
   emit(`CONTEXT CEILING HIT (~${pct}% >= 45%). Flush remaining task state to PROGRESS.md NOW, then STOP this session. Run /work in a fresh session to resume -- it reads PROGRESS.md first.`);
 }
 
