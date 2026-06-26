@@ -70,6 +70,9 @@ echo "==> validate (node --check + JSON parse)"
 for g in pipeline-gate effect-ca-gate secret-gate context-budget work-autostart work-intent work-respawn; do
   node --check "$CLAUDE_DIR/$g.js" && echo "    node --check $g.js ok"
 done
+for h in caveman-anchor app-pipeline-anchor ts-arch-anchor phase-anchor phalanx-selfupdate; do
+  bash -n "$CLAUDE_DIR/$h.sh" && echo "    bash -n $h.sh ok"
+done
 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$SETTINGS"
 echo "    ok"
 
@@ -169,6 +172,12 @@ if [ "${PHALANX_NO_CRON:-0}" != "1" ] && [ "${PHALANX_CRON:-0}" = "1" ]; then
   else
     echo "==> PHALANX_CRON=1 but no crontab; add manually: 0 5 * * * cd $HERE && git pull --tags && ./install.sh"
   fi
+fi
+
+# ---- leak guard (default on; PHALANX_NO_GUARDS=1 to skip) --------------------
+if [ "${PHALANX_NO_GUARDS:-0}" != "1" ]; then
+  echo "==> leak guard"
+  CLAUDE_DIR="$CLAUDE_DIR" bash "$HERE/scripts/install-guards.sh" | sed 's/^/    /'
 fi
 
 echo "==> done. Gates + plugins activate on the NEXT Claude Code session; skills are usable now."

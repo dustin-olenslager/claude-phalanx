@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Phalanx leak guard (pre-push). Hard-blocks a push when the commits being pushed
+# contain:
+#   - secrets (ALWAYS, any repo): AWS/GCP keys, private keys, GitHub/Slack/Stripe
+#     tokens, MCP tokens, generic hardcoded credential assignments;
+#   - personal/private terms (ONLY for the public claude-phalanx repo): read from
+#     a LOCAL denylist file that is NEVER committed -- $PHALANX_LEAKWORDS or
+#     $HOME/.claude/.phalanx-leakwords (one term/regex per line, # comments ok).
+# Bypass (discouraged, never for the public repo): git push --no-verify.
+set -uo pipefail
+
+REMOTE_URL="${2:-}"
+LEAKWORDS="${PHALANX_LEAKWORDS:-$HOME/.claude/.phalanx-leakwords}"
+Z=0000000000000000000000000000000000000000
+is_public=0
+case "$REMOTE_URL" in *claude-phalanx*) is_public=1 ;; esac
+
+SECRET_RE='AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|sk_live_[0-9a-zA-Z]{16,}|AIza[0-9A-Za-z_-]{35}|sk_mt_[0-9A-Za-z]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|(api[_-]?key|secret|token|password|passwd|client[_-]?secret|access[_-]?token)["'"'"' ]*[:=]["'"'"' ]*["'"'"'][^"'"'"']{16,}["'"'"']'
+SECRET_ALLOW='process\.env|import\.meta\.env|os\.environ|getenv|Deno\.env|YOUR_|REPLACE|EXAMPLE|placeholder|xxxx|\$\{|noreply'
+
+fail=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$Z" ] && continue                       # branch deletion
+  if [ "$remote_sha" = "$Z" ]; then
+    added=$(git log -p --no-color -n 300 "$local_sha" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')
+  else
+    added=$(git diff --no-color "$remote_sha..$local_sha" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')
+  fi
+  [ -n "$added" ] || continue
+
+  sh=$(printf '%s\n' "$added" | grep -EnI "$SECRET_RE" | grep -EviI "$SECRET_ALLOW" || true)
+  if [ -n "$sh" ]; then
+    echo "PHALANX LEAK GUARD: possible SECRET in pushed commits:"; printf '  %s\n' "$sh" | head -12; fail=1
+  fi
+
+  if [ "$is_public" = 1 ] && [ -f "$LEAKWORDS" ]; then
+    pat=$(grep -vE '^[[:space:]]*(#|$)' "$LEAKWORDS" | paste -sd'|' - 2>/dev/null)
+    if [ -n "$pat" ]; then
+      ph=$(printf '%s\n' "$added" | grep -EniI "$pat" || true)
+      if [ -n "$ph" ]; then
+        echo "PHALANX LEAK GUARD: PERSONAL/PRIVATE term in push to PUBLIC repo ($REMOTE_URL):"; printf '  %s\n' "$ph" | head -12; fail=1
+      fi
+    fi
+  fi
+done
+
+if [ "$fail" != 0 ]; then
+  echo ""
+  echo "Push REJECTED. Remove the offending content. If this is a genuine false positive on a"
+  echo "NON-public repo you may use 'git push --no-verify' -- never do that for claude-phalanx."
+  exit 1
+fi
+exit 0

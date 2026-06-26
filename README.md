@@ -102,6 +102,29 @@ pipeline degrades gracefully, it never blocks on a missing plugin.
 discipline, and structure — never authorization or destructive-action confirmation. The
 gates are conveniences with documented off-switches, not a sandbox.
 
+## Leak guard (never push private data)
+
+`install.sh` installs a git **leak guard** by default (`PHALANX_NO_GUARDS=1` to skip):
+
+- a global `pre-push` hook (via `core.hooksPath` → `~/.claude/githooks`) that **blocks any
+  push** containing secrets (AWS/GCP keys, private keys, GitHub/Slack/Stripe/MCP tokens,
+  hardcoded credential assignments) — for *every* repo you push from;
+- for pushes to the **public claude-phalanx repo specifically**, it also blocks any added
+  line matching your **local denylist** at `~/.claude/.phalanx-leakwords` (one term/ERE per
+  line). **That file is never committed** — it holds your private infra hostnames, internal
+  paths, client/project names, private emails. The repo ships only a generic stub. Do NOT
+  add things already public by design (your repo URL, your LICENSE name) or every push blocks;
+- a `pre-commit` secret scan (stops a credential before it is even committed);
+- a server-side **gitleaks GitHub Action** (`.github/workflows/secret-scan.yml`) backstop for
+  anything pushed from an un-guarded clone.
+
+Manual audit: `scripts/leak-scan.sh --personal`. False positive on a *non-public* repo:
+`git push --no-verify` (never for claude-phalanx).
+
+Auto-update: the daily/6-hourly cron plus a throttled, lock-guarded `phalanx-selfupdate.sh`
+SessionStart hook keep every instance on the latest release tag. Disable updates with
+`touch ~/.claude/.no-autoupdate`.
+
 ## Uninstall
 
 ```sh
