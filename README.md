@@ -81,6 +81,37 @@ verify (test / `tsc --noEmit` / lint / arch-enforce / Playwright) · TS edits ne
 hard-coded credentials blocked at write-time and at commit-time (gitleaks → trufflehog →
 regex).
 
+## Unattended autonomy (no-babysit)
+
+The loop is the default engine for code work: a coding request seeds itself as a
+task and the `orchestrator` drives it. When the driver session reaches the 45%
+context ceiling it **checkpoints to `PROGRESS.md` and stops** — and an external
+**supervisor** relaunches a fresh `claude -p "/work"` process that resumes from the
+checkpoint. No human ever runs `/clear`.
+
+```sh
+scripts/supervisord.sh start -r <repo>     # detached; drives the backlog to done/BLOCKED
+scripts/supervisord.sh status -r <repo>    # RUNNING/STOPPED + last log
+scripts/supervisord.sh stop   -r <repo>    # or: touch <repo>/.work-off
+```
+
+- **Supervisor** (`run-work.sh`): single-instance per repo (pidfile+lockfile under
+  `.claude-runs/`), fresh process per pass (`PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1`),
+  stops on backlog-empty / `BLOCKED` / MaxPasses (default 30) / optional token budget
+  (`-b`). A killed pass is recoverable — the next pass resumes; it gives up only after
+  3 consecutive failures. Every pass is logged under `.claude-runs/`.
+- **Auto-start** (`phalanx-watch.sh`): list repo roots in `~/.claude/.phalanx-repos`,
+  add a `*/5` cron with `PHALANX_WATCH=1 ./install.sh`, and any repo that gets an open
+  `TASKS.md` is picked up and driven with **no session open**.
+- **Telegram hand-off** (`bot-handoff.sh`): the bot seeds a request-scoped task,
+  launches the detached supervisor, and replies immediately; progress / done / BLOCKED
+  are posted back via `notify.sh` (`PHALANX_NOTIFY_CMD` or `PHALANX_NOTIFY_URL`).
+- **Loop-integrity gate** (`loop-integrity-gate.js`): in a loop-managed repo, blocks a
+  code edit with nothing seeded, and blocks a commit on a `task/<slug>` branch with no
+  green verify this session — independent of the (mutable) pipeline gate.
+- **Operator-risk halt**: a task implying data-loss / irreversible-prod change is never
+  auto-run — it becomes a `BLOCKED:` line for the human.
+
 ## Override flags
 
 - `touch ~/.claude/.pipeline-off`      → "stop pipeline"
@@ -142,9 +173,16 @@ claude-md/sections.md            §0–§16 source of truth
 skills/<name>/SKILL.md           caveman, effect-ts, clean-architecture, caveman-{commit,review,stats},
                                  edge-hunter, adversary-review, optimize-loop, maintain-mode, arch-enforce
 hooks/anchors/*.sh               caveman, app-pipeline, ts-arch, phase
-hooks/gates/*.js                 pipeline, effect-ca, secret
+hooks/gates/*.js                 pipeline, effect-ca, secret, loop-integrity,
+                                 context-budget, work-autostart/intent/respawn
 settings/fragment.json           marketplaces + plugins + hook wiring (merged in)
 scripts/*.mjs                    idempotent settings + CLAUDE.md merge
+scripts/run-work.sh              the unattended SUPERVISOR loop (fresh pass per task)
+scripts/supervisord.sh           start/stop/status the supervisor, detached
+scripts/phalanx-watch.sh         auto-start watcher (scans .phalanx-repos)
+scripts/bot-handoff.sh           Telegram bot -> seed + launch supervisor + ack
+scripts/notify.sh                supervisor lifecycle sink (cmd or webhook)
+scripts/{seed,unseed}-task.sh    request-scoped task seed/cleanup (no re-arm)
 state/*.json                     phase-state templates
 configs/.dependency-cruiser.js   Clean-Architecture dependency ruleset
 ```

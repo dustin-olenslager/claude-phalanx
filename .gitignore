@@ -7,3 +7,8 @@
 *.bak
 .DS_Store
 node_modules/
+TASKS.md
+PROGRESS.md
+.claude-runs/
+.work-off
+.phalanx-repos

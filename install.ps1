@@ -35,8 +35,12 @@ New-Item -ItemType Directory -Force -Path (Join-Path $CLAUDE_DIR 'agents') | Out
 New-Item -ItemType Directory -Force -Path (Join-Path $CLAUDE_DIR 'commands') | Out-Null
 Copy-Item -Force (Join-Path $HERE 'agents\*.md') (Join-Path $CLAUDE_DIR 'agents')
 Copy-Item -Force (Join-Path $HERE 'commands\*.md') (Join-Path $CLAUDE_DIR 'commands')
-Copy-Item -Force (Join-Path $HERE 'scripts\run-work.sh') $CLAUDE_DIR
 Copy-Item -Force (Join-Path $HERE 'scripts\run-work.ps1') $CLAUDE_DIR
+# v1.4 no-babysit: supervisor + watcher + notify + seed/unseed + bot hand-off
+# (.sh; need Git Bash or WSL to run on Windows, copied for completeness).
+foreach ($s in 'run-work','supervisord','phalanx-watch','notify','seed-task','unseed-task','bot-handoff') {
+  Copy-Item -Force (Join-Path $HERE "scripts\$s.sh") $CLAUDE_DIR
+}
 Copy-Item -Force (Join-Path $HERE 'TASKS.template.md') $CLAUDE_DIR
 
 Write-Host '==> templates'
@@ -57,7 +61,7 @@ if (Test-Path $SETTINGS) { Copy-Item -Force $SETTINGS "$SETTINGS.phalanx.bak" }
 node (Join-Path $HERE 'scripts\merge-settings.mjs') $SETTINGS (Join-Path $HERE 'settings\fragment.json') $CLAUDE_DIR
 
 Write-Host '==> validate'
-foreach ($g in 'pipeline-gate','effect-ca-gate','secret-gate','context-budget','work-autostart','work-intent','work-respawn') {
+foreach ($g in 'pipeline-gate','effect-ca-gate','secret-gate','loop-integrity-gate','context-budget','work-autostart','work-intent','work-respawn') {
   node --check (Join-Path $CLAUDE_DIR "$g.js"); Write-Host "    node --check $g.js ok"
 }
 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' $SETTINGS
@@ -81,6 +85,14 @@ ExpectAllow 'tsarch:ts-after-skills' (Fire 'effect-ca-gate.js' "{`"tool_name`":`
 ExpectDeny  'pipeline:code-no-plan' (Fire 'pipeline-gate.js' "{`"tool_name`":`"Edit`",`"tool_input`":{`"file_path`":`"/p/y.go`"},`"session_id`":`"$sid`"}")
 $leak = 'AKIA' + 'Z3QJ5K7N2WX4Y6PB'   # assembled so no key-shaped literal ships
 ExpectDeny  'secret:write-aws-key'  (Fire 'secret-gate.js' "{`"tool_name`":`"Write`",`"tool_input`":{`"file_path`":`"/p/c.ts`",`"content`":`"const k='$leak'`"},`"session_id`":`"$sid`"}")
+
+# v1.4 loop-integrity: code edit with 0 open tasks in cwd TASKS.md -> deny.
+# Use forward-slash paths (outside the gate's /tmp exclusion) so the JSON is valid.
+$lig = ($env:TEMP -replace '\\','/') + '/phalanx-lig'
+New-Item -ItemType Directory -Force -Path $lig | Out-Null
+Set-Content -Path (Join-Path $lig 'TASKS.md') -Value "# T`n- [x] done"
+ExpectDeny 'loop:seed-before-edit' (Fire 'loop-integrity-gate.js' "{`"tool_name`":`"Edit`",`"tool_input`":{`"file_path`":`"$lig/x.js`"},`"cwd`":`"$lig`",`"session_id`":`"li`"}")
+Remove-Item -Recurse -Force $lig -ErrorAction SilentlyContinue
 
 if ($script:FAIL -ne 0) { throw 'SELF-TEST FAILED' }
 Write-Host '==> done. Gates + plugins activate on the NEXT Claude Code session; skills usable now.'

@@ -21,11 +21,24 @@ function readInput() {
   catch { return {}; }
 }
 
+// A supervisor (run-work.sh) relaunches fresh `claude -p` passes itself; when one
+// is live, this session must just END (the supervisor continues) -- never block to
+// drive the same session on, and never emit a "/clear" instruction (item 4).
+function supervisorActive(dir) {
+  if (process.env.PHALANX_SUPERVISOR === "1") return true;
+  try {
+    const pid = parseInt(fs.readFileSync(path.join(dir, ".claude-runs", "supervisor.pid"), "utf8").trim(), 10);
+    if (pid > 0) { process.kill(pid, 0); return true; }
+  } catch {}
+  return false;
+}
+
 const input = readInput();
 const cwd = input.cwd || process.cwd();
 
 const ONESHOT = process.env.PHALANX_ONESHOT === "1";
 if (ONESHOT) stop();
+if (supervisorActive(cwd)) stop();
 
 // Guard against infinite loops.
 if (input.stop_hook_active) stop();
