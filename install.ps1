@@ -30,6 +30,15 @@ Write-Host '==> hooks (anchors + gates -> CLAUDE_DIR root)'
 Copy-Item -Force (Join-Path $HERE 'hooks\anchors\*.sh') $CLAUDE_DIR
 Copy-Item -Force (Join-Path $HERE 'hooks\gates\*.js') $CLAUDE_DIR
 
+Write-Host '==> agents + commands + work-loop wrappers'
+New-Item -ItemType Directory -Force -Path (Join-Path $CLAUDE_DIR 'agents') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $CLAUDE_DIR 'commands') | Out-Null
+Copy-Item -Force (Join-Path $HERE 'agents\*.md') (Join-Path $CLAUDE_DIR 'agents')
+Copy-Item -Force (Join-Path $HERE 'commands\*.md') (Join-Path $CLAUDE_DIR 'commands')
+Copy-Item -Force (Join-Path $HERE 'scripts\run-work.sh') $CLAUDE_DIR
+Copy-Item -Force (Join-Path $HERE 'scripts\run-work.ps1') $CLAUDE_DIR
+Copy-Item -Force (Join-Path $HERE 'TASKS.template.md') $CLAUDE_DIR
+
 Write-Host '==> templates'
 Copy-Item -Force (Join-Path $HERE 'state\*.json') (Join-Path $CLAUDE_DIR 'phalanx-templates\state')
 Copy-Item -Force (Join-Path $HERE 'configs\.dependency-cruiser.js') (Join-Path $CLAUDE_DIR 'phalanx-templates')
@@ -48,9 +57,9 @@ if (Test-Path $SETTINGS) { Copy-Item -Force $SETTINGS "$SETTINGS.phalanx.bak" }
 node (Join-Path $HERE 'scripts\merge-settings.mjs') $SETTINGS (Join-Path $HERE 'settings\fragment.json') $CLAUDE_DIR
 
 Write-Host '==> validate'
-node --check (Join-Path $CLAUDE_DIR 'pipeline-gate.js')
-node --check (Join-Path $CLAUDE_DIR 'effect-ca-gate.js')
-node --check (Join-Path $CLAUDE_DIR 'secret-gate.js')
+foreach ($g in 'pipeline-gate','effect-ca-gate','secret-gate','context-budget','work-autostart','work-respawn') {
+  node --check (Join-Path $CLAUDE_DIR "$g.js"); Write-Host "    node --check $g.js ok"
+}
 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' $SETTINGS
 Write-Host '    ok'
 
