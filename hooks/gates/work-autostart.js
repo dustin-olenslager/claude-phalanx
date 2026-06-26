@@ -50,6 +50,23 @@ if (open > 0 && blocked) {
   emit("AUTONOMOUS LOOP paused: PROGRESS.md has a BLOCKED line. Surface the blocker to the user and wait -- do not auto-start.");
 }
 
+// Operator-risk tripwire (item 7): an open task whose text implies an
+// irreversible / destructive / data-continuity change must NOT auto-run. Surface
+// it and make the loop confirm (write BLOCKED) before executing.
+if (open > 0) {
+  let riskLine = "";
+  try {
+    const txt = fs.readFileSync(path.join(cwd, "TASKS.md"), "utf8");
+    const RISK = /(data[- ]?loss|irreversible|won'?t be (in|captured)|can'?t be undone|cannot be undone|drop\s+(table|column|database)|delete[sd]?\s+prod|destructive|truncate\b|migration cutover|backfill|\bwipe\b)/i;
+    for (const l of txt.split(/\r?\n/)) {
+      if (/^\s*-\s*\[\s*\]/.test(l) && RISK.test(l)) { riskLine = l.trim(); break; }
+    }
+  } catch {}
+  if (riskLine) {
+    emit("AUTONOMOUS LOOP: an open task carries a data-risk / irreversible-change flag -- \"" + riskLine.slice(0, 160) + "\". Do NOT auto-execute it. Confirm with the operator; if it is destructive or irreversible, write 'BLOCKED: <reason, needs operator confirm>' to PROGRESS.md and halt. Other safe tasks proceed normally.");
+  }
+}
+
 if (open > 0) {
   const resume = respawn ? " A RESPAWN checkpoint exists in PROGRESS.md -- resume from it first." : "";
   const scope = ONESHOT

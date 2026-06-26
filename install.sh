@@ -36,8 +36,13 @@ mkdir -p "$CLAUDE_DIR/agents" "$CLAUDE_DIR/commands"
 cp "$HERE"/agents/*.md "$CLAUDE_DIR/agents/"
 cp "$HERE"/commands/*.md "$CLAUDE_DIR/commands/"
 cp "$HERE"/scripts/run-work.sh "$HERE"/scripts/run-work.ps1 "$CLAUDE_DIR/" 2>/dev/null || true
+# v1.4 no-babysit: supervisor process-manager, auto-start watcher, notify sink,
+# request-scoped seed/unseed, and the Telegram bot hand-off entrypoint.
+cp "$HERE"/scripts/supervisord.sh "$HERE"/scripts/phalanx-watch.sh "$HERE"/scripts/notify.sh \
+   "$HERE"/scripts/seed-task.sh "$HERE"/scripts/unseed-task.sh "$HERE"/scripts/bot-handoff.sh "$CLAUDE_DIR/" 2>/dev/null || true
 cp "$HERE"/TASKS.template.md "$CLAUDE_DIR/" 2>/dev/null || true
-chmod +x "$CLAUDE_DIR/run-work.sh" 2>/dev/null || true
+chmod +x "$CLAUDE_DIR"/run-work.sh "$CLAUDE_DIR"/supervisord.sh "$CLAUDE_DIR"/phalanx-watch.sh \
+         "$CLAUDE_DIR"/notify.sh "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh 2>/dev/null || true
 
 echo "==> templates (state + dependency-cruiser)"
 cp "$HERE"/state/*.json "$CLAUDE_DIR/phalanx-templates/state/"
@@ -67,8 +72,11 @@ else HOOK_BASE="$CLAUDE_DIR"; fi
 node "$HERE/scripts/merge-settings.mjs" "$SETTINGS" "$HERE/settings/fragment.json" "$HOOK_BASE"
 
 echo "==> validate (node --check + JSON parse)"
-for g in pipeline-gate effect-ca-gate secret-gate context-budget work-autostart work-intent work-respawn; do
+for g in pipeline-gate effect-ca-gate secret-gate loop-integrity-gate context-budget work-autostart work-intent work-respawn; do
   node --check "$CLAUDE_DIR/$g.js" && echo "    node --check $g.js ok"
+done
+for s in run-work supervisord phalanx-watch notify seed-task unseed-task bot-handoff; do
+  bash -n "$CLAUDE_DIR/$s.sh" && echo "    bash -n $s.sh ok"
 done
 for h in caveman-anchor app-pipeline-anchor ts-arch-anchor phase-anchor phalanx-selfupdate; do
   bash -n "$CLAUDE_DIR/$h.sh" && echo "    bash -n $h.sh ok"
@@ -87,7 +95,9 @@ LEAK="AKIA""Z3QJ5K7N2WX4Y6PB"
 # Run gates from an isolated temp dir so live OFF-switch files (.pipeline-off etc.)
 # and the operator's runtime env don't skew the logic self-test.
 TG="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-tg)"; mkdir -p "$TG"
-cp "$CLAUDE_DIR"/pipeline-gate.js "$CLAUDE_DIR"/effect-ca-gate.js "$CLAUDE_DIR"/secret-gate.js "$TG/" 2>/dev/null || true
+for j in pipeline-gate effect-ca-gate secret-gate loop-integrity-gate context-budget work-autostart work-respawn; do
+  cp "$CLAUDE_DIR/$j.js" "$TG/" 2>/dev/null || true
+done
 fire() { echo "$2" | PHALANX_WARN= node "$TG/$1"; }
 expect_deny() { case "$3" in *'"permissionDecision":"deny"'*) echo "    PASS $1";; *) echo "    FAIL $1 (expected deny) got: $3"; FAIL=1;; esac; }
 expect_allow() { if [ -z "$3" ]; then echo "    PASS $1"; else echo "    FAIL $1 (expected allow/empty) got: $3"; FAIL=1; fi; }
@@ -156,6 +166,76 @@ else
   echo "    SKIP secret:commit-* (git not installed)"
 fi
 
+# ---- v1.4 no-babysit sims (items 1,4,5,6,7) --------------------------------
+echo "==> v1.4 no-babysit sims"
+
+# item 5 loop-integrity-gate. Needs a cwd OUTSIDE /tmp (the gate excludes ^/tmp/
+# code paths like every gate). Run the $TG copy so HERE-based .work-off checks
+# can't read a live global switch.
+LIGG="$TG/loop-integrity-gate.js"
+LIGDIR="$HOME/.phalanx-lig-selftest"; rm -rf "$LIGDIR"; mkdir -p "$LIGDIR"
+li() { echo "$1" | PHALANX_WARN= node "$LIGG"; }
+printf '# T\n- [x] done\n' > "$LIGDIR/TASKS.md"
+o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_deny "loop:seed-before-edit" x "$o"
+printf '# T\n- [ ] do it\n' > "$LIGDIR/TASKS.md"
+o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_allow "loop:edit-after-seed" x "$o"
+if command -v git >/dev/null 2>&1; then
+  ( cd "$LIGDIR" && git init -q && git config user.email a@b.c && git config user.name a && git checkout -q -b task/x && git commit -q --allow-empty -m i )
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2\"}"); expect_deny "loop:commit-before-verify" x "$o"
+  li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2\"}" >/dev/null
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2\"}"); expect_allow "loop:commit-after-verify" x "$o"
+else echo "    SKIP loop:commit-* (git not installed)"; fi
+rm -rf "$LIGDIR"
+
+# item 4 context-budget: supervisor active -> message must NOT contain "/clear";
+# one-shot with no supervisor -> NEVER writes a RESPAWN file.
+CBJ="$TG/context-budget.js"
+CBDIR="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-cb)"; mkdir -p "$CBDIR"
+BIGTP="$CBDIR/t.jsonl"; head -c 330000 /dev/zero | tr '\0' x > "$BIGTP"
+printf '# T\n- [ ] big\n' > "$CBDIR/TASKS.md"; rm -f "$CBDIR/PROGRESS.md"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$BIGTP" "$CBDIR" | PHALANX_SUPERVISOR=1 node "$CBJ")
+case "$o" in *"supervisor will relaunch"*) case "$o" in *"/clear"*) echo "    FAIL cb:sup-defers (mentions /clear)"; FAIL=1;; *) echo "    PASS cb:sup-defers";; esac;; *) echo "    FAIL cb:sup-defers got: $o"; FAIL=1;; esac
+rm -f "$CBDIR/PROGRESS.md"
+printf '{"transcript_path":"%s","cwd":"%s"}' "$BIGTP" "$CBDIR" | PHALANX_ONESHOT=1 node "$CBJ" >/dev/null
+[ -f "$CBDIR/PROGRESS.md" ] && { echo "    FAIL cb:oneshot-no-respawn (wrote RESPAWN)"; FAIL=1; } || echo "    PASS cb:oneshot-no-respawn"
+rm -rf "$CBDIR"
+
+# item 4 work-respawn: supervisor active -> stop (empty, no block/continue).
+WRJ="$TG/work-respawn.js"
+WRDIR="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-wr)"; printf '# T\n- [ ] x\n' > "$WRDIR/TASKS.md"
+o=$(printf '{"cwd":"%s"}' "$WRDIR" | PHALANX_SUPERVISOR=1 node "$WRJ"); [ -z "$o" ] && echo "    PASS respawn:sup-stops" || { echo "    FAIL respawn:sup-stops got: $o"; FAIL=1; }
+rm -rf "$WRDIR"
+
+# item 7 work-autostart: a risk-flagged open task trips; a safe task stays quiet.
+WAJ="$TG/work-autostart.js"
+WADIR="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-wa)"
+printf '# T\n- [ ] do the migration cutover flip; facts wont be in memory_entries\n' > "$WADIR/TASKS.md"
+o=$(printf '{"cwd":"%s"}' "$WADIR" | node "$WAJ"); case "$o" in *data-risk*) echo "    PASS autostart:risk-trips";; *) echo "    FAIL autostart:risk-trips got: $o"; FAIL=1;; esac
+printf '# T\n- [ ] add a blue button\n' > "$WADIR/TASKS.md"
+o=$(printf '{"cwd":"%s"}' "$WADIR" | node "$WAJ"); case "$o" in *data-risk*) echo "    FAIL autostart:safe-falsetrip"; FAIL=1;; *) echo "    PASS autostart:safe-quiet";; esac
+rm -rf "$WADIR"
+
+# items 1+6 supervisor loop drains a backlog across fresh passes (stub claude),
+# and request-scoped unseed removes a left-open TASKS.md.
+if command -v sed >/dev/null 2>&1; then
+  SDIR="$(mktemp -d)"; mkdir -p "$SDIR/repo" "$SDIR/bin" "$SDIR/cd"
+  cat > "$SDIR/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+t="./TASKS.md"; [ -f "$t" ] && sed -i '0,/- \[ \]/s//- [x]/' "$t" 2>/dev/null || true
+exit 0
+STUB
+  chmod +x "$SDIR/bin/claude"
+  printf '# T\n- [ ] a -- ok\n- [ ] b -- ok\n' > "$SDIR/repo/TASKS.md"
+  PATH="$SDIR/bin:$PATH" CLAUDE_DIR="$SDIR/cd" bash "$CLAUDE_DIR/run-work.sh" -r "$SDIR/repo" -m 6 -s 0 >/dev/null 2>&1 || true
+  if grep -Eq '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]' "$SDIR/repo/TASKS.md" 2>/dev/null; then echo "    FAIL supervisor:drains-backlog"; FAIL=1; else echo "    PASS supervisor:drains-backlog"; fi
+  # request-scoped: a fresh repo whose only task is the seed -> unseed removes the
+  # whole file, so a later unrelated message can't re-arm the loop (item 6).
+  RS="$SDIR/reqscoped"; mkdir -p "$RS"
+  id=$(bash "$CLAUDE_DIR/seed-task.sh" "$RS" "one off" | tail -n1); bash "$CLAUDE_DIR/unseed-task.sh" "$RS" "$id"
+  [ -f "$RS/TASKS.md" ] && { echo "    FAIL reqscoped:unseed-removes-empty"; FAIL=1; } || echo "    PASS reqscoped:unseed-removes-empty"
+  rm -rf "$SDIR"
+else echo "    SKIP supervisor:* (sed not installed)"; fi
+
 rm -rf "/tmp/phalanx-pipeline" "/tmp/phalanx-tsarch" "$TG" 2>/dev/null || true
 if [ "$FAIL" -ne 0 ]; then echo "==> SELF-TEST FAILED"; exit 1; fi
 
@@ -171,6 +251,33 @@ if [ "${PHALANX_NO_CRON:-0}" != "1" ] && [ "${PHALANX_CRON:-0}" = "1" ]; then
     fi
   else
     echo "==> PHALANX_CRON=1 but no crontab; add manually: 0 5 * * * cd $HERE && git pull --tags && ./install.sh"
+  fi
+fi
+
+# ---- auto-start watcher registry + optional cron ----------------------------
+REG="$CLAUDE_DIR/.phalanx-repos"
+if [ ! -f "$REG" ]; then
+  cat > "$REG" <<'EOF'
+# Phalanx auto-start registry -- one absolute repo path per line; # comments ok.
+# phalanx-watch.sh launches a DETACHED supervisor for any listed repo that has
+# open TASKS.md items, no running supervisor, and no .work-off. Add repo roots:
+#   /workspace/my-project
+EOF
+  echo "==> created watcher registry stub $REG (add repo roots to enable auto-start)"
+else
+  echo "==> watcher registry present: $REG"
+fi
+if [ "${PHALANX_NO_CRON:-0}" != "1" ] && [ "${PHALANX_WATCH:-0}" = "1" ]; then
+  if command -v crontab >/dev/null 2>&1; then
+    if crontab -l 2>/dev/null | grep -q 'phalanx-watch'; then
+      echo "==> watcher cron already present"
+    else
+      wline="*/5 * * * * CLAUDE_DIR=\"$CLAUDE_DIR\" \"$CLAUDE_DIR/phalanx-watch.sh\" >/dev/null 2>&1 # phalanx-watch"
+      ( crontab -l 2>/dev/null; echo "$wline" ) | crontab -
+      echo "==> installed auto-start watcher cron (*/5): scan $REG, launch supervisors"
+    fi
+  else
+    echo "==> PHALANX_WATCH=1 but no crontab; add manually: */5 * * * * $CLAUDE_DIR/phalanx-watch.sh"
   fi
 fi
 
