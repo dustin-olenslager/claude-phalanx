@@ -301,6 +301,17 @@ CLAUDE_DIR="$EVON" bash "$CLAUDE_DIR/evidence.sh" -r "$EVR" >/dev/null 2>&1; eec
 { [ "$eec" = 0 ] && [ ! -d "$EVR/evidence" ]; } && echo "    PASS evidence:on-no-url-soft" || { echo "    FAIL evidence:on-no-url-soft (ec=$eec)"; FAIL=1; }
 rm -rf "$EVOFF" "$EVON" "$EVR"
 
+# notify port: the per-job thread routing key reaches the adapter as a 4th arg and
+# defaults to the repo basename (so each job lands in its own Telegram topic/chat).
+NDIR="$(mktemp -d)"; NOUT="$NDIR/got"
+printf '#!/usr/bin/env bash\nprintf "%%s|%%s|%%s|%%s\\n" "$1" "$2" "$3" "$4" > "$GOTFILE"\n' > "$NDIR/sink.sh"; chmod +x "$NDIR/sink.sh"
+GOTFILE="$NOUT" PHALANX_NOTIFY_CMD="$NDIR/sink.sh" PHALANX_REPO="/x/my-repo" bash "$CLAUDE_DIR/notify.sh" done "all green" >/dev/null 2>&1
+got=$(cat "$NOUT" 2>/dev/null || echo)
+case "$got" in *"|my-repo") echo "    PASS notify:thread-to-adapter";; *) echo "    FAIL notify:thread-to-adapter got: $got"; FAIL=1;; esac
+out=$(PHALANX_REPO="/x/my-repo" bash "$CLAUDE_DIR/notify.sh" info hi 2>/dev/null)
+case "$out" in *my-repo*) echo "    PASS notify:default-thread-is-repo";; *) echo "    FAIL notify:default-thread-is-repo got: $out"; FAIL=1;; esac
+rm -rf "$NDIR"
+
 # items 1+6 supervisor loop drains a backlog across fresh passes (stub claude),
 # and request-scoped unseed removes a left-open TASKS.md.
 if command -v sed >/dev/null 2>&1; then
