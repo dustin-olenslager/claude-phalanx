@@ -19,7 +19,18 @@ REPO="$(cd "$REPO" 2>/dev/null && pwd)" || { echo "bad repo path" >&2; exit 1; }
 LOGDIR="$REPO/.claude-runs"; PIDF="$LOGDIR/supervisor.pid"; SUPLOG="$LOGDIR/supervisor.log"
 
 pid_of() { cat "$PIDF" 2>/dev/null; }
-alive()  { local p; p="$(pid_of)"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
+# Verify the pid is ACTUALLY a run-work.sh process (item 3): a bare `kill -0`
+# trusts PID reuse, so an unrelated process inheriting the same pid after a
+# crash/reboot would make the loop look permanently "running" -- blocking
+# auto-start forever. Where /proc is available, require run-work.sh in cmdline.
+alive() {
+  local p; p="$(pid_of)"
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null || return 1
+  if [ -r "/proc/$p/cmdline" ]; then
+    tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q 'run-work.sh' || return 1
+  fi
+  return 0
+}
 
 case "$cmd" in
   start)
@@ -37,7 +48,8 @@ case "$cmd" in
     ;;
   stop)
     p="$(pid_of)"
-    if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+    # Gate on alive() (not a bare kill -0) so a reused pid isn't signalled (item 3).
+    if alive; then
       # setsid makes run-work a process-group leader (pgid==pid): signal the group
       # so the in-flight `claude -p` child dies too. Fall back to the bare pid.
       kill -TERM "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true
