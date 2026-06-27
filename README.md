@@ -124,10 +124,51 @@ scripts/supervisord.sh stop   -r <repo>    # or: touch <repo>/.work-off
   launches the detached supervisor, and replies immediately; progress / done / BLOCKED
   are posted back via `notify.sh` (`PHALANX_NOTIFY_CMD` or `PHALANX_NOTIFY_URL`).
 - **Loop-integrity gate** (`loop-integrity-gate.js`): in a loop-managed repo, blocks a
-  code edit with nothing seeded, and blocks a commit on a `task/<slug>` branch with no
-  green verify this session — independent of the (mutable) pipeline gate.
+  code edit with nothing seeded, blocks a commit on a `task/<slug>` branch with no green
+  verify this session, and gates merges into `main` (see below) — independent of the
+  (mutable) pipeline gate.
 - **Operator-risk halt**: a task implying data-loss / irreversible-prod change is never
   auto-run — it becomes a `BLOCKED:` line for the human.
+
+## Merge + deploy on green (autonomous completion)
+
+The point of the loop is *finishing*: after a task commits green on `task/<slug>`, the
+loop can merge to `main` and deploy — but only where you opt in, gated mechanically.
+Three **independent, default-OFF** per-repo markers:
+
+| Marker (repo root) | Grants |
+|---|---|
+| `.phalanx-autorun` | the watch cron may drive this repo unattended (registry membership alone does **not**) |
+| `.phalanx-automerge` | a green-verified `task/<slug>` may merge to `main` |
+| `.phalanx-deploy` (executable) | run after a green merge to deploy; absent → merge only, report |
+
+The **merge-into-main gate is non-bypassable** (ignores `PHALANX_WARN`):
+
+- **5c** — deny unless `.phalanx-automerge` exists **and** the merged branch has a fresh
+  green verify flag. Never on red.
+- **5d** — deny when the merged branch touches a DB migration (`drizzle/`, `migrations/`,
+  `prisma/migrations/`, `alembic/`, …). prod-DB changes stay operator-gated: apply the
+  migration and sign off, then merge by hand.
+
+Rollback: merges use `--no-ff` (one commit per task → `git revert -m 1 <sha>`); a failed
+`.phalanx-deploy` becomes a `BLOCKED:` line, never an auto-revert.
+
+**Mobile / Codemagic:** a repo's `.phalanx-deploy` can end by pushing a `v*` git tag,
+which triggers the Codemagic APK build/email — no engine change, the loop already has
+tag-push creds. Keep the tag pattern in the per-repo deploy script.
+
+**Push creds:** a scoped `GH_TOKEN` in `~/.claude/.loop-git-env` (mode 0600, injected
+only on the `claude` exec env), or a credential helper the loop user can read.
+
+## Worktree isolation
+
+Each autonomous pass runs in its own git worktree (`claude --worktree`, under
+`.claude/worktrees/`), so concurrent supervisors / sessions never collide on the primary
+checkout's branch or index. Loop **state stays shared**: `TASKS.md`, `PROGRESS.md`,
+`.claude-runs/`, and the `.phalanx-*` markers resolve to the shared repo root (via
+`git rev-parse --git-common-dir`), so a worktree pass drains the same backlog and its code
+is still gated. The primary stays on `main` and receives the merge (`git -C <main> merge`);
+worktrees are removed after each pass. Opt out with `PHALANX_NO_WORKTREE=1`.
 
 ## Reporting & adapters
 
@@ -162,7 +203,10 @@ so no bot tokens/infra leak in. An adapter only implements the port:
 - `touch ~/.claude/.pipeline-off`      → "stop pipeline"
 - `touch ~/.claude/.ts-arch-off`       → "stop effect" / "stop clean-arch"
 - `touch ~/.claude/.secret-scan-off`   → disable secret scan
-- `export PHALANX_WARN=1`              → gates warn instead of hard-block
+- `export PHALANX_WARN=1`              → gates warn instead of hard-block (NOT 5c/5d merge gate)
+- `export PHALANX_NO_WORKTREE=1`       → run passes in the primary tree, no per-pass worktree
+- `touch <repo>/.phalanx-autorun`      → let the watcher drive this repo unattended
+- `touch <repo>/.phalanx-automerge`    → allow autonomous merge-on-green to `main`
 - caveman comms: say "stop caveman" / "normal mode"
 
 ## Plugins
