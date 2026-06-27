@@ -22,14 +22,9 @@ const ONESHOT = process.env.PHALANX_ONESHOT === "1";
 
 if (H.killSwitched(cwd, CLAUDE_DIR)) emit("");
 
-const open = H.openTaskCount(cwd);
-
-let blocked = false, respawn = false;
-try {
-  const p = fs.readFileSync(path.join(cwd, "PROGRESS.md"), "utf8");
-  if (/RESPAWN/.test(p)) respawn = true;
-  if (/BLOCKED/.test(p)) blocked = true;
-} catch {}
+// Single source of truth for loop state (lib/phalanx-hook.js) -- replaces the
+// blocked/respawn/risk re-parses that were duplicated here.
+const { open, blocked, respawn, riskLine } = H.tasksState(cwd);
 
 // A stale BLOCKED line must NOT smother a brand-new request -- only suppress
 // when there is actually open work to be blocked on.
@@ -40,27 +35,8 @@ if (open > 0 && blocked) {
 // Operator-risk tripwire (item 7): an open task -- OR a checkpoint note in
 // PROGRESS.md -- implying an irreversible / destructive / data-continuity change
 // must NOT auto-run. Surface it and make the loop confirm (write BLOCKED) first.
-// (v1.4.1: also scan PROGRESS.md, where such flags usually land on a checkpoint.)
-if (open > 0) {
-  const RISK = /(data[- ]?loss|data[- ]?continuity|irreversible|(won'?t|will ?not) be (in|captured)|(can'?t|cannot) be undone|drop\s+(table|column|database)|delete[sd]?\s+prod|destructive|truncate\b|migration cutover|cutover|backfill|\bwipe\b)/i;
-  let riskLine = "";
-  try {
-    const txt = fs.readFileSync(path.join(cwd, "TASKS.md"), "utf8");
-    for (const l of txt.split(/\r?\n/)) {
-      if (/^\s*-\s*\[\s*\]/.test(l) && RISK.test(l)) { riskLine = l.trim(); break; }
-    }
-  } catch {}
-  if (!riskLine) {
-    try {
-      const p = fs.readFileSync(path.join(cwd, "PROGRESS.md"), "utf8");
-      for (const l of p.split(/\r?\n/)) {
-        if (RISK.test(l)) { riskLine = l.trim(); break; }
-      }
-    } catch {}
-  }
-  if (riskLine) {
-    emit("AUTONOMOUS LOOP: a data-risk / irreversible-change flag is present (TASKS.md or PROGRESS.md) -- \"" + riskLine.slice(0, 160) + "\". Do NOT auto-execute it. Confirm with the operator; if it is destructive or irreversible, write 'BLOCKED: <reason, needs operator confirm>' to PROGRESS.md and halt. Other safe tasks proceed normally.");
-  }
+if (open > 0 && riskLine) {
+  emit("AUTONOMOUS LOOP: a data-risk / irreversible-change flag is present (TASKS.md or PROGRESS.md) -- \"" + riskLine.slice(0, 160) + "\". Do NOT auto-execute it. Confirm with the operator; if it is destructive or irreversible, write 'BLOCKED: <reason, needs operator confirm>' to PROGRESS.md and halt. Other safe tasks proceed normally.");
 }
 
 if (open > 0) {

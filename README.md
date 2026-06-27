@@ -195,6 +195,12 @@ gates are conveniences with documented off-switches, not a sandbox.
 - a server-side **gitleaks GitHub Action** (`.github/workflows/secret-scan.yml`) backstop for
   anything pushed from an un-guarded clone.
 
+If you already use a global `core.hooksPath` (Husky, lefthook, …), Phalanx will **not**
+overwrite it — your hooks are preserved and the global leak guard simply stays inactive.
+Re-run with `PHALANX_FORCE_GUARDS=1` to take over (the previous value is stashed to
+`~/.claude/.prev-hookspath` and restored by `uninstall.sh`), or `PHALANX_NO_GUARDS=1` to
+skip guard install entirely.
+
 Manual audit: `scripts/leak-scan.sh --personal`. False positive on a *non-public* repo:
 `git push --no-verify` (never for claude-phalanx).
 

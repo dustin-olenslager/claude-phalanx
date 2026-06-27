@@ -96,13 +96,12 @@ if (frac >= CEILING) {
   // nudged the human once -- don't re-emit the /clear instruction every subsequent
   // turn (item 5). stop_hook_active (when present) is the same signal: a re-entry.
   let alreadyNudged = !!input.stop_hook_active;
-  try { if (/RESPAWN/.test(fs.readFileSync(progress, "utf8").slice(-400))) alreadyNudged = true; } catch {}
+  if (H.respawnPresent(H.readRepoFile(cwd, "PROGRESS.md"))) alreadyNudged = true;
   if (willResume) {
     const line = `\n<!-- RESPAWN ${new Date().toISOString()} ctx~${pct}% -- checkpoint state above, STOP, resume fresh -->\n`;
     try {
       if (!fs.existsSync(progress)) fs.writeFileSync(progress, "# PROGRESS\n");
-      const tail = fs.readFileSync(progress, "utf8").slice(-400);
-      if (!/RESPAWN/.test(tail)) fs.appendFileSync(progress, line);
+      if (!H.respawnPresent(H.readRepoFile(cwd, "PROGRESS.md"))) fs.appendFileSync(progress, line);
     } catch {}
   }
   if (SUP) {

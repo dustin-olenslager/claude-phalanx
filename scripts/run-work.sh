@@ -50,6 +50,9 @@ if [ -f "$HEADLESS_ENV" ]; then
 fi
 NOTIFY="$HERE/notify.sh"; [ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
+# Single source of truth for TASKS/PROGRESS parsing (mirrors the JS lib tasksState).
+TS_LIB="$HERE/tasks-state.sh"; [ -f "$TS_LIB" ] || TS_LIB="$CLAUDE_DIR/tasks-state.sh"
+. "$TS_LIB" || { echo "FATAL: cannot source $TS_LIB" >&2; exit 1; }
 TASKS="$REPO/TASKS.md"; PROGRESS="$REPO/PROGRESS.md"; LOGDIR="$REPO/.claude-runs"
 PIDF="$LOGDIR/supervisor.pid"; LOCK="$LOGDIR/supervisor.lock"
 # Structured sentinels (control flow MUST NOT depend on tail-window position):
@@ -111,7 +114,7 @@ echo "$$" > "$PIDF"
 
 if [ ! -f "$TASKS" ]; then echo "No TASKS.md in $REPO. Create one with '- [ ]' items first." >&2; exit 1; fi
 
-backlog_empty() { [ -f "$TASKS" ] || return 0; ! grep -Eq '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]' "$TASKS"; }
+backlog_empty() { ! ts_has_open "$REPO"; }
 off()           { [ -f "$REPO/.work-off" ] || [ -f "$CLAUDE_DIR/.work-off" ]; }
 # Authoritative halt: the sentinel file wins (item 1). The PROGRESS.md scan is a
 # DETECTOR only -- it scans the WHOLE file (not a tail window, which a verbose pass
@@ -119,8 +122,8 @@ off()           { [ -f "$REPO/.work-off" ] || [ -f "$CLAUDE_DIR/.work-off" ]; }
 # sentinel so control flow never again depends on tail position.
 blocked() {
   [ -f "$BLOCKED_FILE" ] && return 0
-  if [ -f "$PROGRESS" ] && grep -q 'BLOCKED' "$PROGRESS"; then
-    { grep -m1 'BLOCKED' "$PROGRESS" 2>/dev/null || echo BLOCKED; } > "$BLOCKED_FILE" 2>/dev/null || true
+  if ts_blocked "$REPO"; then
+    ts_blocked_line "$REPO" > "$BLOCKED_FILE" 2>/dev/null || true
     return 0
   fi
   return 1
