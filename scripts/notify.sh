@@ -48,7 +48,10 @@ if [ -n "${PHALANX_NOTIFY_CMD:-}" ]; then
     || printf '%s\tWARN\t%s\tnotify-cmd failed\n' "$ev_ts" "$thread" >> "$LOGDIR/events.log" 2>/dev/null || true
 elif [ -n "${PHALANX_NOTIFY_URL:-}" ] && command -v curl >/dev/null 2>&1; then
   json="$(build_json)"
-  curl -s -m 10 -X POST -H 'Content-Type: application/json' -d "$json" "$PHALANX_NOTIFY_URL" >/dev/null 2>&1 \
+  # Authenticate to Herald's secured /event endpoint when a shared secret is set.
+  # No-op header when unset (open endpoints keep working).
+  auth=(); [ -n "${PHALANX_NOTIFY_SECRET:-}" ] && auth=(-H "x-herald-secret: $PHALANX_NOTIFY_SECRET")
+  curl -s -m 10 -X POST -H 'Content-Type: application/json' "${auth[@]}" -d "$json" "$PHALANX_NOTIFY_URL" >/dev/null 2>&1 \
     || printf '%s\tWARN\t%s\tcurl POST failed\n' "$ev_ts" "$thread" >> "$LOGDIR/events.log" 2>/dev/null || true
 else
   printf '[phalanx:%s/%s] %s\n' "$event" "$thread" "$msg"

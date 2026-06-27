@@ -28,10 +28,26 @@ cd "$REPO"
 
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 # Headless auth: each `claude -p` pass needs CLAUDE_CODE_OAUTH_TOKEN -- the
-# interactive OAuth in .credentials.json is rejected for `claude -p` (401). Source
-# the operator-provisioned token file if present (mint via `claude setup-token`;
-# write `export CLAUDE_CODE_OAUTH_TOKEN=...` to $CLAUDE_DIR/.headless-env, 0600).
-[ -f "$CLAUDE_DIR/.headless-env" ] && . "$CLAUDE_DIR/.headless-env"
+# interactive OAuth in .credentials.json is rejected for `claude -p` (401). Read
+# ONLY the token from the operator-provisioned file and pass it solely on the
+# `claude` invocation env (below), never `. source` it into the whole pass env --
+# otherwise every child (curl/docker/ssh) inherits the token (exfil risk).
+# Mint via `claude setup-token`; write `export CLAUDE_CODE_OAUTH_TOKEN=...` (or a
+# bare `CLAUDE_CODE_OAUTH_TOKEN=...`) to $CLAUDE_DIR/.headless-env, mode 0600.
+OAUTH_TOKEN=""
+HEADLESS_ENV="$CLAUDE_DIR/.headless-env"
+if [ -f "$HEADLESS_ENV" ]; then
+  # Refuse a group- or other-readable token file (perms must be 0600/0400):
+  # reject if either the group digit or the other digit is non-zero.
+  perms="$(stat -c '%a' "$HEADLESS_ENV" 2>/dev/null || stat -f '%Lp' "$HEADLESS_ENV" 2>/dev/null || echo '')"
+  go="${perms: -2}"
+  if [ -n "$perms" ] && [ "$go" != "00" ]; then
+    echo "WARN: $HEADLESS_ENV is group/other-readable (mode $perms); skipping. chmod 600 it." >&2
+  else
+    OAUTH_TOKEN="$(grep -E '^[[:space:]]*(export[[:space:]]+)?CLAUDE_CODE_OAUTH_TOKEN=' "$HEADLESS_ENV" 2>/dev/null \
+      | tail -n1 | sed -E 's/^[[:space:]]*(export[[:space:]]+)?CLAUDE_CODE_OAUTH_TOKEN=//; s/^["'\'']//; s/["'\'']$//')"
+  fi
+fi
 NOTIFY="$HERE/notify.sh"; [ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
 TASKS="$REPO/TASKS.md"; PROGRESS="$REPO/PROGRESS.md"; LOGDIR="$REPO/.claude-runs"
@@ -85,6 +101,7 @@ while true; do
   note progress "pass $pass starting"
   set +e
   PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
+    CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" \
     claude -p "/work" 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
   set -e
 
