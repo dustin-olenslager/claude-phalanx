@@ -33,6 +33,21 @@ function supervisorActive(dir) {
   return false;
 }
 
+// On a context-ceiling RESPAWN in a bare interactive session (no supervisor yet),
+// hand off to a detached supervisor instead of asking a human to /clear -- it
+// relaunches fresh `claude -p` passes from PROGRESS.md until the backlog is done.
+function launchSupervisor(dir) {
+  const sup = path.join(CLAUDE_DIR, "supervisord.sh");
+  try {
+    if (!fs.existsSync(sup)) return false;
+    const ch = require("child_process").spawn("bash", [sup, "start", "-r", dir], {
+      detached: true, stdio: "ignore", cwd: dir,
+    });
+    ch.unref();
+    return true;
+  } catch { return false; }
+}
+
 const input = readInput();
 const cwd = input.cwd || process.cwd();
 
@@ -67,6 +82,10 @@ try {
 } catch {}
 
 if (respawn) {
+  // Auto-escalate: launch a detached supervisor to carry the loop to done with no
+  // human /clear. (No supervisor is active -- supervisorActive() stopped us above.)
+  // Fall back to the manual nudge only if the supervisor can't be launched.
+  if (launchSupervisor(cwd)) stop();
   cont(
     `Context ceiling was hit. You've checkpointed to PROGRESS.md. Run /clear to reset context, ` +
     `then resume the /work loop from PROGRESS.md. ${open} task(s) remain. Do not summarize -- just continue.`

@@ -267,6 +267,16 @@ WRDIR="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-wr)"; printf '# T\n- [ ] x\n
 o=$(printf '{"cwd":"%s"}' "$WRDIR" | PHALANX_SUPERVISOR=1 node "$WRJ"); [ -z "$o" ] && echo "    PASS respawn:sup-stops" || { echo "    FAIL respawn:sup-stops got: $o"; FAIL=1; }
 rm -rf "$WRDIR"
 
+# work-respawn AUTO-ESCALATE: a ceiling RESPAWN with NO live supervisor must launch
+# a detached supervisor (stubbed) and STOP -- never nag a human to /clear.
+WRDIR2="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-wr2)"; printf '# T\n- [ ] x\n' > "$WRDIR2/TASKS.md"
+printf '# P\n<!-- RESPAWN 2026 ctx~46%% -- checkpoint -->\n' > "$WRDIR2/PROGRESS.md"
+MARK="$WRDIR2/sup-launched"
+printf '#!/usr/bin/env bash\nprintf "%%s" "$*" > "%s"\n' "$MARK" > "$TG/supervisord.sh"; chmod +x "$TG/supervisord.sh"
+o=$(printf '{"cwd":"%s"}' "$WRDIR2" | node "$WRJ"); sleep 1
+if [ -z "$o" ] && [ -f "$MARK" ]; then echo "    PASS respawn:auto-escalate"; else echo "    FAIL respawn:auto-escalate (out='$o' mark=$([ -f "$MARK" ] && echo yes || echo no))"; FAIL=1; fi
+rm -f "$TG/supervisord.sh"; rm -rf "$WRDIR2"
+
 # item 7 work-autostart: a risk-flagged open task trips; a safe task stays quiet.
 WAJ="$TG/work-autostart.js"
 WADIR="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-wa)"

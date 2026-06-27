@@ -27,6 +27,11 @@ REPO="$(cd "$REPO" 2>/dev/null && pwd)" || { echo "bad repo path" >&2; exit 1; }
 cd "$REPO"
 
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+# Headless auth: each `claude -p` pass needs CLAUDE_CODE_OAUTH_TOKEN -- the
+# interactive OAuth in .credentials.json is rejected for `claude -p` (401). Source
+# the operator-provisioned token file if present (mint via `claude setup-token`;
+# write `export CLAUDE_CODE_OAUTH_TOKEN=...` to $CLAUDE_DIR/.headless-env, 0600).
+[ -f "$CLAUDE_DIR/.headless-env" ] && . "$CLAUDE_DIR/.headless-env"
 NOTIFY="$HERE/notify.sh"; [ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
 TASKS="$REPO/TASKS.md"; PROGRESS="$REPO/PROGRESS.md"; LOGDIR="$REPO/.claude-runs"
