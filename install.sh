@@ -222,17 +222,43 @@ if command -v git >/dev/null 2>&1; then
 else echo "    SKIP loop:commit-* (git not installed)"; fi
 rm -rf "$LIGDIR"
 
-# item 4 context-budget: supervisor active -> message must NOT contain "/clear";
-# one-shot with no supervisor -> NEVER writes a RESPAWN file.
+# item 4 context-budget: occupancy from the REAL usage signal (last transcript usage
+# line) + env-derived window (PHALANX_CTX_WINDOW, default ~1M) -- NOT raw byte size.
 CBJ="$TG/context-budget.js"
 CBDIR="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-cb)"; mkdir -p "$CBDIR"
-BIGTP="$CBDIR/t.jsonl"; head -c 330000 /dev/zero | tr '\0' x > "$BIGTP"
-printf '# T\n- [ ] big\n' > "$CBDIR/TASKS.md"; rm -f "$CBDIR/PROGRESS.md"
+printf '# T\n- [ ] big\n' > "$CBDIR/TASKS.md"
+# one assistant transcript line whose usage = $1 input + $2 cache_read tokens.
+cbusage() { printf '{"type":"assistant","message":{"usage":{"input_tokens":%s,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":12}}}\n' "$1" "$2"; }
+
+# FALSE-CEILING GUARD (the bug this fixes): a transcript huge in BYTES (the fixed
+# system prompt + CLAUDE.md dump) -- ~57% of a 200k window under the old bytes/3.5 --
+# but whose real usage is ~168k/1M = 17% must stay SILENT (below the 38% warn).
+NORMTP="$CBDIR/normal.jsonl"
+{ head -c 400000 /dev/zero | tr '\0' x; printf '\n'; cbusage 2 168000; } > "$NORMTP"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$NORMTP" "$CBDIR" | node "$CBJ")
+[ -z "$o" ] && echo "    PASS cb:normal-no-falsetrip" || { echo "    FAIL cb:normal-no-falsetrip got: $o"; FAIL=1; }
+
+# real high usage (~50% of 1M) trips. supervisor active -> defer msg, never "/clear".
+BIGTP="$CBDIR/t.jsonl"; { head -c 40000 /dev/zero | tr '\0' x; printf '\n'; cbusage 2 500000; } > "$BIGTP"
+rm -f "$CBDIR/PROGRESS.md"
 o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$BIGTP" "$CBDIR" | PHALANX_SUPERVISOR=1 node "$CBJ")
 case "$o" in *"supervisor will relaunch"*) case "$o" in *"/clear"*) echo "    FAIL cb:sup-defers (mentions /clear)"; FAIL=1;; *) echo "    PASS cb:sup-defers";; esac;; *) echo "    FAIL cb:sup-defers got: $o"; FAIL=1;; esac
+
+# one-shot, no supervisor -> NEVER writes a RESPAWN file.
 rm -f "$CBDIR/PROGRESS.md"
 printf '{"transcript_path":"%s","cwd":"%s"}' "$BIGTP" "$CBDIR" | PHALANX_ONESHOT=1 node "$CBJ" >/dev/null
 [ -f "$CBDIR/PROGRESS.md" ] && { echo "    FAIL cb:oneshot-no-respawn (wrote RESPAWN)"; FAIL=1; } || echo "    PASS cb:oneshot-no-respawn"
+
+# env-derived window: the SAME normal transcript trips once the window is tiny (200k).
+rm -f "$CBDIR/PROGRESS.md"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$NORMTP" "$CBDIR" | PHALANX_CTX_WINDOW=200000 node "$CBJ")
+case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:env-window-trips";; *) echo "    FAIL cb:env-window-trips got: $o"; FAIL=1;; esac
+
+# byte-size FALLBACK still works when a transcript has no usage line yet (pure bytes).
+PURETP="$CBDIR/pure.jsonl"; head -c 200000 /dev/zero | tr '\0' x > "$PURETP"
+rm -f "$CBDIR/PROGRESS.md"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$PURETP" "$CBDIR" | PHALANX_CTX_WINDOW=100000 node "$CBJ")
+case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:byte-fallback";; *) echo "    FAIL cb:byte-fallback got: $o"; FAIL=1;; esac
 rm -rf "$CBDIR"
 
 # item 4 work-respawn: supervisor active -> stop (empty, no block/continue).

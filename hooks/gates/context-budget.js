@@ -1,19 +1,32 @@
 #!/usr/bin/env node
 "use strict";
-// Context-budget hook (PostToolUse). Estimates accumulated context from the
-// session transcript and, when it crosses CEILING of the model window, writes a
-// RESPAWN directive to <project>/PROGRESS.md so the orchestrator checkpoints and
-// a fresh session resumes. Never blocks a tool -- advisory via additionalContext.
+// Context-budget hook (PostToolUse). Estimates context occupancy from the session
+// transcript and, when it crosses CEILING of the model window, writes a RESPAWN
+// directive to <project>/PROGRESS.md so the orchestrator checkpoints and a fresh
+// session resumes. Never blocks a tool -- advisory via additionalContext.
 // Loop sessions only: silent unless the cwd repo has open TASKS.md items.
 // One-shot (PHALANX_ONESHOT=1, e.g. the Telegram bot): WARN inline only, never
 // write a RESPAWN marker -- there is no fresh-session resumer there.
+//
+// Occupancy uses the REAL usage signal -- the most recent assistant turn's usage in
+// the JSONL transcript (input + cache_read + cache_creation), exactly what the Claude
+// Code gauge shows. The old raw-byte estimate (bytes/3.5 of the whole transcript)
+// counted the fixed system prompt + CLAUDE.md dump and drifted to ~200% while the
+// gauge sat at ~17%, forcing premature checkpoints. Byte estimate is now a fallback;
+// window is env-derived (Opus 4.x ~1M), not a hardcoded 200k.
 const fs = require("fs");
 const path = require("path");
 
-const WINDOW_TOKENS = 200000; // 200k window
+// Model context window in tokens. Override per-model via PHALANX_CTX_WINDOW; default
+// ~1M (Opus 4.x). Bad/empty/non-positive env -> the safe default.
+function ctxWindow() {
+  const n = parseInt(process.env.PHALANX_CTX_WINDOW || "", 10);
+  return Number.isFinite(n) && n > 0 ? n : 1000000;
+}
+const WINDOW_TOKENS = ctxWindow();
 const CEILING = 0.45;         // never exceed 45%
 const WARN = 0.38;            // early nudge to start wrapping the current unit
-const CHARS_PER_TOKEN = 3.5;  // conservative estimate
+const CHARS_PER_TOKEN = 3.5;  // fallback-only: rough tokens-per-char for byte estimate
 const ONESHOT = process.env.PHALANX_ONESHOT === "1";
 
 function readInput() {
@@ -39,6 +52,34 @@ function supervisorActive(dir) {
   return false;
 }
 
+// The last assistant turn's usage = the actual prompt size sent = context occupancy
+// the gauge shows. Read a bounded tail (trailing tool_result lines can be large) and
+// scan complete lines backward for the first message.usage. null when none found.
+// ponytail: 1MB tail, not a full-file parse; a trailing entry >~1MB falls back to the
+// byte estimate -- rare, and safe now the window is ~1M not 200k.
+function lastUsageTokens(tp, size) {
+  try {
+    const span = Math.min(size, 1024 * 1024);
+    if (span <= 0) return null;
+    const buf = Buffer.alloc(span);
+    const fd = fs.openSync(tp, "r");
+    try { fs.readSync(fd, buf, 0, span, size - span); } finally { fs.closeSync(fd); }
+    const lines = buf.toString("utf8").split("\n");
+    if (size > span) lines.shift(); // drop the leading partial line
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const ln = lines[i].trim();
+      if (!ln || ln[0] !== "{") continue;
+      let rec; try { rec = JSON.parse(ln); } catch { continue; }
+      const u = rec && rec.message && rec.message.usage;
+      if (u) {
+        const t = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+        if (t > 0) return t;
+      }
+    }
+  } catch {}
+  return null;
+}
+
 const input = readInput();
 const tp = input.transcript_path || "";
 const cwd = input.cwd || process.cwd();
@@ -57,7 +98,10 @@ if (openTasks === 0) emit("");
 let bytes = 0;
 try { bytes = fs.statSync(tp).size; } catch { emit(""); }
 
-const estTokens = Math.round(bytes / CHARS_PER_TOKEN);
+// Prefer the real usage signal; fall back to the byte estimate only when the
+// transcript has no usage line yet.
+const real = lastUsageTokens(tp, bytes);
+const estTokens = real != null ? real : Math.round(bytes / CHARS_PER_TOKEN);
 const frac = estTokens / WINDOW_TOKENS;
 
 if (frac < WARN) emit(""); // healthy, say nothing
