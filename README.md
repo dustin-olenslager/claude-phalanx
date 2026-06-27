@@ -1,24 +1,41 @@
 # Phalanx
 
+<p>
+  <a href="https://github.com/dustin-olenslager/claude-phalanx/releases"><img alt="release" src="https://img.shields.io/github/v/tag/dustin-olenslager/claude-phalanx?label=release&sort=semver&color=2563eb"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Claude Code" src="https://img.shields.io/badge/Claude%20Code-ready-d97757">
+  <img alt="enforced by hooks" src="https://img.shields.io/badge/enforced%20by-hooks-22c55e">
+  <img alt="zero deps" src="https://img.shields.io/badge/runtime-node%20only-555">
+</p>
+
 **Turn Claude Code into a phase-aware, multi-team software factory:** a hard-gated
 pipeline, Clean Architecture + Effect standards, adversarial review, and token
 discipline — all **always-on** and **enforced by hooks**, so they survive every
 session and apply to subagents.
+
+Most "agent prompts" are a paragraph you paste and hope holds. Phalanx is the
+opposite: a small install that writes **SessionStart anchors** (re-inject the rules
+every session) and **PreToolUse gates** (block the wrong move before it happens). The
+discipline doesn't depend on the model remembering — it's wired into the harness.
+
+**What you get, the moment it's installed:**
+
+- 🚦 **Phase-gated pipeline** — no code before a plan, no commit before a verify. Each gate is a real `PreToolUse` hook, not a vibe.
+- 🧠 **Always-on standards** — Clean Architecture + typed-errors/schema (TS = Effect 3.x), checked mechanically by a dependency linter.
+- 🗡️ **Adversarial review** — `edge-hunter` finds failure modes, `adversary-review` grades and demands a working diff per finding.
+- 🤖 **No-babysit autonomy** — a request seeds itself as a task; a supervisor relaunches fresh `claude -p` passes across the context ceiling. No human ever runs `/clear`.
+- 🔒 **Leak guard + secret gates** — secrets blocked at write-time and push-time; scoped so your private repos are never touched.
+- 🪙 **Token discipline** — only the active phase's team is "on the clock"; dormant specialists cost nothing.
 
 A *phalanx* is a disciplined formation of specialists advancing in lockstep. That's
 the model: you operate as a full org of world-class specialists, and at any moment
 only the **active phase's team** is on the clock — so you don't burn tokens on a team
 that isn't working.
 
-> Not a prompt you paste and hope it sticks. Phalanx installs **SessionStart anchors**
-> (re-inject the rules every session) and **PreToolUse gates** (block the wrong move
-> before it happens): no code before a plan, no commit before a verify, no TypeScript
-> without Effect, no code without Clean Architecture, no hard-coded secret.
-
 ## Install
 
 ```sh
-git clone https://github.com/<you>/claude-phalanx ~/.claude/phalanx
+git clone https://github.com/dustin-olenslager/claude-phalanx ~/.claude/phalanx
 ~/.claude/phalanx/install.sh                 # add PHALANX_CRON=1 for daily auto-update
 # Windows:  & $env:USERPROFILE\.claude\phalanx\install.ps1
 ```
