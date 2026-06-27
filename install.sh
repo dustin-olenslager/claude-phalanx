@@ -152,6 +152,25 @@ o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\
 fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ruff check .\"},\"session_id\":\"phalanx-lint\"}" >/dev/null
 o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"session_id\":\"phalanx-lint\"}"); expect_allow "pipeline:commit-after-lint" x "$o"
 
+# item 2 risk routing: default OFF == identical to today ($TG has no risk-policy.json
+# so ROUTING_ON is false -- the asserts above prove the unchanged path). Here: switch +
+# enabled policy + a LOW rule fast-paths a LOW code edit; HIGH still blocks; and neither
+# the switch alone nor an enabled-policy alone routes (double-key opt-in, data master wins).
+RR="$TG/rr"; mkdir -p "$RR"; cp "$CLAUDE_DIR/pipeline-gate.js" "$RR/"
+cat > "$RR/risk-policy.json" <<'JSON'
+{ "riskRouting": { "enabled": true }, "riskTierRules": [ { "match": "\\.go$", "tier": "LOW" }, { "match": ".*", "tier": "HIGH" } ] }
+JSON
+rrfire() { echo "$2" | PHALANX_WARN= node "$RR/$1"; }
+o=$(rrfire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/p/a.go\"},\"session_id\":\"rr0\"}"); expect_deny "risk:no-switch-blocks" x "$o"
+touch "$RR/.risk-routing-on"
+o=$(rrfire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/p/a.go\"},\"session_id\":\"rr1\"}"); expect_allow "risk:low-fastpath-allows" x "$o"
+o=$(rrfire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/p/a.rs\"},\"session_id\":\"rr1\"}"); expect_deny "risk:high-still-blocks" x "$o"
+cat > "$RR/risk-policy.json" <<'JSON'
+{ "riskRouting": { "enabled": false }, "riskTierRules": [ { "match": "\\.go$", "tier": "LOW" } ] }
+JSON
+o=$(rrfire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/p/a.go\"},\"session_id\":\"rr2\"}"); expect_deny "risk:policy-disabled-blocks" x "$o"
+rm -rf "$RR"
+
 # secret-gate WRITE-TIME
 o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/proj/c.ts\",\"content\":\"const k='$LEAK'\"},\"session_id\":\"s\"}"); expect_deny "secret:write-aws-key" x "$o"; expect_teach "secret:write-aws-key" x "$o"
 o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/proj/c.ts\",\"content\":\"const k=process.env.API_KEY\"},\"session_id\":\"s\"}"); expect_allow "secret:write-env-ref" x "$o"
