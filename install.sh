@@ -224,7 +224,31 @@ if command -v git >/dev/null 2>&1; then
   [ -f "$LIGDIR/.claude-runs/verified.task_x" ] && echo "    PASS loop:verify-flag-written" || { echo "    FAIL loop:verify-flag-written"; FAIL=1; }
   # ...then commit under a DIFFERENT session id (a fresh supervisor pass) still sees it.
   o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li3-freshpass\"}"); expect_allow "loop:commit-cross-pass-verify" x "$o"
-else echo "    SKIP loop:commit-* (git not installed)"; fi
+
+  # ---- item 5c: merge-on-green into main (opt-in + green-or-deny, non-bypassable) ----
+  # The repo here is on branch task/x with a fresh verified.task_x flag (written above).
+  # The merge command checks out main first, so CHECKOUT_MAIN marks it "into main" and the
+  # gate checks the MERGED branch's flag (task/x), not main's.
+  MG="git checkout main && git merge --no-ff task/x"
+  # (1) NOT opted in -> deny + teach, regardless of green.
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$MG\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"mg1\"}"); expect_deny "merge:deny-not-optedin" x "$o"; expect_teach "merge:deny-not-optedin" x "$o"
+  touch "$LIGDIR/.phalanx-automerge"
+  # (2) opted in + merged branch (task/x) has a fresh GREEN verify -> allow.
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$MG\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"mg2\"}"); expect_allow "merge:allow-green-optedin" x "$o"
+  # (3) opted in but merging a branch with NO verify flag -> deny (never on red).
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout main && git merge --no-ff task/unverified\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"mg3\"}"); expect_deny "merge:deny-no-green" x "$o"
+  # (4) NON-BYPASSABLE: even under PHALANX_WARN=1 a red merge still DENIES (unlike 5a/5b).
+  o=$(echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout main && git merge --no-ff task/unverified\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"mg4\"}" | PHALANX_WARN=1 node "$LIGG"); expect_deny "merge:nonbypassable-warn" x "$o"
+  # (5) a branch-LOCAL merge (target is NOT main) is untouched even without opt-in.
+  rm -f "$LIGDIR/.phalanx-automerge"
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git merge --no-ff feature/side\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"mg5\"}"); expect_allow "merge:branch-local-untouched" x "$o"
+
+  # ---- deploy convention: orchestrator runs an optional .phalanx-deploy post-merge ----
+  printf '#!/usr/bin/env bash\necho deployed\n' > "$LIGDIR/.phalanx-deploy"; chmod +x "$LIGDIR/.phalanx-deploy"
+  node -e 'const H=require(process.argv[1]); process.exit(H.deployScript(process.argv[2])?0:1)' "$TG/lib/phalanx-hook.js" "$LIGDIR" && echo "    PASS deploy:script-detected" || { echo "    FAIL deploy:script-detected"; FAIL=1; }
+  rm -f "$LIGDIR/.phalanx-deploy"
+  node -e 'const H=require(process.argv[1]); process.exit(H.deployScript(process.argv[2])?1:0)' "$TG/lib/phalanx-hook.js" "$LIGDIR" && echo "    PASS deploy:absent-is-empty" || { echo "    FAIL deploy:absent-is-empty"; FAIL=1; }
+else echo "    SKIP loop:commit-* / merge:* (git not installed)"; fi
 rm -rf "$LIGDIR"
 
 # item 4 context-budget: occupancy from the REAL usage signal (last transcript usage

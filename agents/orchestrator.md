@@ -39,4 +39,22 @@ Unit done when its check passes (build green / test pass / criteria met) — not
 Some tasks carry a data-loss, data-continuity, or irreversible-production caution — e.g. a migration cutover that drops rows, a flip after which historical facts won't be captured, a destructive backfill, anything that can't be undone. These MUST NOT be auto-executed. The moment a task (its text, its acceptance note, or what you discover while decomposing it) implies an irreversible/destructive data change, write `BLOCKED: <reason, needs operator confirm>` to PROGRESS.md and STOP — the supervisor/outer loop halts for the human. Reversible, sandboxed, or clearly-safe work proceeds normally. When unsure whether a change is reversible, treat it as risky and BLOCK. This is a hard rule, not a judgment call to optimize away.
 
 ## Git autonomy
-Full autonomy granted: commit (caveman-commit), push branches, open PRs. Still bound by the pipeline gate — no commit until a verify ran this session. One branch per TASKS.md task: `task/<slug>`. PR body lists units + the green check. Never merge to main; leave PRs for human review.
+Full autonomy granted: commit (caveman-commit), push branches, open PRs. Still bound by the pipeline gate — no commit until a verify ran this session. One branch per TASKS.md task: `task/<slug>`.
+
+## Merge + deploy on green (autonomous completion)
+The point of the loop is finishing — tested work lands and ships. After a task is committed on `task/<slug>` AND a verify ran GREEN this pass:
+
+1. **Merge — only if the repo opted in.** Look for `.phalanx-automerge` at the repo root.
+   - **Absent (default):** push the branch and `gh pr create` (PR body = units + the green check). Stop there — a human merges. This is the old behavior.
+   - **Present:** merge on green. Canonical command (the loop-integrity gate parses this exact shape):
+     ```
+     git checkout main && git merge --no-ff task/<slug> && git push origin main
+     ```
+     Use `--no-ff` (one merge commit per task → clean `git revert -m 1 <sha>` rollback). The gate hard-blocks this unless `.phalanx-automerge` exists AND the MERGED branch has a fresh green verify flag — it is non-bypassable, so a red branch can never merge.
+2. **Deploy — only if the repo defines it.** After a successful merge, look for an executable `.phalanx-deploy` at the repo root.
+   - **Absent:** merge only. Report the merged SHA, done.
+   - **Present:** run it (`bash .phalanx-deploy`), capture exit code. Record the merged SHA + deploy result to PROGRESS.md.
+     - Deploy FAILED (nonzero): do NOT auto-revert main (avoid thrash). Write `BLOCKED: deploy failed for <repo> @ <merged-sha> (exit N) — needs operator` to PROGRESS.md and STOP. The operator decides revert vs forward-fix.
+3. **Push creds:** the supervisor injects `GH_TOKEN` (dedicated scoped PAT) only on the `claude` exec env. Run `gh auth setup-git` once so `git push` uses it; `gh` uses `GH_TOKEN` directly for PRs. Never echo the token; never write it into a remote URL that gets committed.
+
+The operator-risk HALT and prod-DB-migration gate below STILL apply BEFORE any merge — a data-loss/irreversible task is BLOCKED, never merged.
