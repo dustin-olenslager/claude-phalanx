@@ -175,10 +175,12 @@ function currentBranch(cwd) {
   } catch { return ""; }
 }
 const VERIFY_FLAG_TTL_MS = 12 * 60 * 60 * 1000; // a stale flag older than 12h is ignored + swept
+function verifyFlagPathFor(root, branch) {
+  const safe = (branch || "nobranch").replace(/[^a-zA-Z0-9_.-]/g, "_");
+  return path.join(root, ".claude-runs", "verified." + safe);
+}
 function verifyFlagPath(cwd) {
-  const root = repoRoot(cwd);
-  const branch = (currentBranch(cwd) || "nobranch").replace(/[^a-zA-Z0-9_.-]/g, "_");
-  return path.join(root, ".claude-runs", "verified." + branch);
+  return verifyFlagPathFor(repoRoot(cwd), currentBranch(cwd) || "nobranch");
 }
 function sweepStaleVerifyFlags(cwd) {
   try {
@@ -197,12 +199,19 @@ function markVerified(cwd) {
     fs.writeFileSync(p, new Date().toISOString());
   } catch {}
 }
-function verifyFlagFresh(cwd) {
+// Freshness of the verify flag for an ARBITRARY branch. The merge-on-green gate needs
+// this: the merge runs FROM main (currentBranch === "main" at that point), so the flag
+// to check is the MERGED task branch's, not currentBranch's. verifyFlagFresh keeps the
+// current-branch behavior the commit gate relies on.
+function verifyFlagFreshFor(cwd, branch) {
   sweepStaleVerifyFlags(cwd);
   try {
-    const st = fs.statSync(verifyFlagPath(cwd));
+    const st = fs.statSync(verifyFlagPathFor(repoRoot(cwd), branch));
     return Date.now() - st.mtimeMs <= VERIFY_FLAG_TTL_MS;
   } catch { return false; }
+}
+function verifyFlagFresh(cwd) {
+  return verifyFlagFreshFor(cwd, currentBranch(cwd) || "nobranch");
 }
 
 // Build the META exclusion regex anchored at a gate's own install dir (HERE), so a
@@ -219,6 +228,49 @@ const TS = /\.(ts|tsx|mts|cts)$/i;
 // Commands that count as a verify (test runner / typecheck / lint / arch / e2e).
 const VERIFY_CMD = /(playwright|\be2e\b|vitest|jest|flutter\s+test|pytest|\bgo\s+test\b|cargo\s+test|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test|yarn\s+test|cypress|\btsc\b|--noEmit|typecheck|eslint|biome|\bruff\b|golangci-lint|clippy|\blint\b|depcruise|dependency-cruiser|import-linter|archunit|\bverify\b)/i;
 
+// ── Autonomous merge-on-green into main (loop-integrity rule 5c) ──────────────
+// A `git merge` …                           (the moment task code becomes main)
+const GIT_MERGE = /\bgit\b[^\n]*\bmerge\b/;
+// …whose TARGET is main: either we are already on main, or the same command line
+// checks out / switches to main first (the canonical `git checkout main && git merge`).
+const CHECKOUT_MAIN = /\bgit\b[^\n]*\b(checkout|switch)\b[^\n]*\b(main|master)\b/;
+// A push that publishes main (gated the same way as the merge that produced it).
+const PUSH_MAIN = /\bgit\b[^\n]*\bpush\b[^\n]*\b(main|master)\b/;
+
+// Extract the MERGED (source) branch from a `git merge …` command, skipping flags
+// and `-m <msg>` and never returning main/master (the target). Used to look up that
+// branch's verify flag. Canonical form documented for the orchestrator is
+// `git merge --no-ff <branch>`; this still tolerates flag/branch reordering.
+function mergedBranch(cmd) {
+  const m = /\bgit\b[^\n]*?\bmerge\b([^\n&|;]*)/.exec(cmd || "");
+  if (!m) return "";
+  const toks = m[1].trim().split(/\s+/);
+  for (let i = 0; i < toks.length; i++) {
+    const tok = toks[i];
+    if (!tok) continue;
+    if (tok === "-m" || tok === "--message") { i++; continue; } // skip flag + its value
+    if (tok.startsWith("-")) continue;                          // other flags
+    if (/^(main|master)$/.test(tok)) continue;                  // the target, not source
+    return tok.replace(/['"]/g, "");
+  }
+  return "";
+}
+
+// Per-repo OPT-IN to autonomous merge: the operator creates a `.phalanx-automerge`
+// marker at the repo root. Absent (the default) → the loop opens a PR instead. This is
+// the mechanical "which repos" switch — fleet-wide is impossible by accident.
+function autoMergeEnabled(cwd) {
+  try { return fs.existsSync(path.join(repoRoot(cwd), ".phalanx-automerge")); } catch { return false; }
+}
+// Optional per-repo deploy hook: an executable `.phalanx-deploy` the orchestrator runs
+// AFTER a green merge. Returns its path, or "" when absent (→ merge only, report).
+function deployScript(cwd) {
+  try {
+    const p = path.join(repoRoot(cwd), ".phalanx-deploy");
+    return fs.existsSync(p) ? p : "";
+  } catch { return ""; }
+}
+
 module.exports = {
   readStdin, readInput,
   emit, decide,
@@ -227,6 +279,7 @@ module.exports = {
   blockedDirective, blockedLine,
   respawnActive, respawnPresent, riskLineOf, tasksState,
   stateDir, flagHelpers, metaRe,
-  repoRoot, currentBranch, markVerified, verifyFlagFresh,
+  repoRoot, currentBranch, markVerified, verifyFlagFresh, verifyFlagFreshFor,
+  GIT_MERGE, CHECKOUT_MAIN, PUSH_MAIN, mergedBranch, autoMergeEnabled, deployScript,
   CODE, TS, VERIFY_CMD,
 };

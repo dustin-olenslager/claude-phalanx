@@ -42,4 +42,22 @@ assert.equal(H.blockedDirective("- BLOCKED: x"), true);
 assert.equal(H.blockedLine("notes\n  BLOCKED: needs operator\nmore"), "BLOCKED: needs operator");
 assert.equal(H.blockedLine("the 3 BLOCKED items"), "BLOCKED");
 
+// ── merge-on-green helpers (rule 5c) ───────────────────────────────────────
+// mergedBranch: pull the SOURCE branch out of a `git merge ...`, skipping flags +
+// `-m <msg>`, never returning the target (main/master). Pure string parsing.
+assert.equal(H.mergedBranch("git checkout main && git merge --no-ff task/x"), "task/x");
+assert.equal(H.mergedBranch("git merge --no-ff task/slug -m \"msg\""), "task/slug");
+assert.equal(H.mergedBranch("git merge -m \"msg\" task/y"), "task/y"); // -m value not mistaken for branch
+assert.equal(H.mergedBranch("git merge main"), "");                    // target only, no source
+assert.equal(H.mergedBranch("echo no merge here"), "");
+
+// GIT_MERGE / CHECKOUT_MAIN / PUSH_MAIN matchers.
+assert.equal(H.GIT_MERGE.test("git merge --no-ff task/x"), true);
+assert.equal(H.GIT_MERGE.test("git commit -m x"), false);
+assert.equal(H.CHECKOUT_MAIN.test("git checkout main && git merge task/x"), true);
+assert.equal(H.CHECKOUT_MAIN.test("git switch master"), true);
+assert.equal(H.CHECKOUT_MAIN.test("git checkout task/x"), false);
+assert.equal(H.PUSH_MAIN.test("git push origin main"), true);
+assert.equal(H.PUSH_MAIN.test("git push origin task/x"), false);
+
 console.log("ok: tasks-state lib helpers pass");

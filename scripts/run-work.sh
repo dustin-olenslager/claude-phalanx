@@ -56,6 +56,27 @@ if [ -f "$HEADLESS_ENV" ]; then
       | tail -n1 | sed -E 's/^[[:space:]]*(export[[:space:]]+)?CLAUDE_CODE_OAUTH_TOKEN=//; s/^["'\'']//; s/["'\'']$//')"
   fi
 fi
+# Loop git push creds: a DEDICATED, scoped PAT so a supervised pass can push branches,
+# open PRs, and (in opted-in repos) merge to main + deploy. Same safety model as the
+# OAuth token: read ONLY the token from an operator-provisioned 0600 file and pass it
+# SOLELY on the `claude` invocation env below -- never `. source` it, or every child
+# (curl/ssh/docker) would inherit a push-capable token (exfil risk). Provision: write
+# `GH_TOKEN=<scoped PAT>` (or `export GH_TOKEN=...`) to $CLAUDE_DIR/.loop-git-env, 0600.
+# Inside the pass the orchestrator runs `gh auth setup-git` so git push uses GH_TOKEN;
+# gh uses it directly for PRs. Absent -> the loop falls back to PR-less branch work and
+# reports a creds gap (it never merges without push creds).
+GH_TOKEN_VAL=""
+LOOP_GIT_ENV="$CLAUDE_DIR/.loop-git-env"
+if [ -f "$LOOP_GIT_ENV" ]; then
+  gperms="$(stat -c '%a' "$LOOP_GIT_ENV" 2>/dev/null || stat -f '%Lp' "$LOOP_GIT_ENV" 2>/dev/null || echo '')"
+  ggo="${gperms: -2}"
+  if [ -n "$gperms" ] && [ "$ggo" != "00" ]; then
+    echo "WARN: $LOOP_GIT_ENV is group/other-readable (mode $gperms); skipping. chmod 600 it." >&2
+  else
+    GH_TOKEN_VAL="$(grep -E '^[[:space:]]*(export[[:space:]]+)?GH_TOKEN=' "$LOOP_GIT_ENV" 2>/dev/null \
+      | tail -n1 | sed -E 's/^[[:space:]]*(export[[:space:]]+)?GH_TOKEN=//; s/^["'\'']//; s/["'\'']$//')"
+  fi
+fi
 NOTIFY="$HERE/notify.sh"; [ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
 # Single source of truth for TASKS/PROGRESS parsing (mirrors the JS lib tasksState).
@@ -158,11 +179,11 @@ while true; do
   set +e
   if command -v timeout >/dev/null 2>&1; then
     PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
-      CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" \
+      CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" GH_TOKEN="$GH_TOKEN_VAL" \
       timeout "${PHALANX_PASS_TIMEOUT:-1800}s" claude -p "/work" 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
   else
     PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
-      CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" \
+      CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" GH_TOKEN="$GH_TOKEN_VAL" \
       claude -p "/work" 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
   fi
   set -e
