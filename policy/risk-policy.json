@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "_comment": "Phalanx unifying policy contract. Gates READ this; they never hardcode. Missing/unparseable file or a missing key -> each gate falls back to its embedded default == today's behavior. Edit the LIVE copy at <CLAUDE_DIR>/risk-policy.json; install.sh creates it if absent and never clobbers your edits (template kept under phalanx-templates/).",
+
+  "remediation": {
+    "_comment": "Item 3 (gates as teachers). Each value is the concrete fix a gate appends to its block reason. Keep the 'Fix → ' marker so the recipe is unmistakable. Override any line here without touching gate code.",
+    "pipeline:no-plan": "Fix → run a planning skill, then retry the edit: phased-plan (multi-step), system-design + adr (architecture), write-spec (feature), or maintain-mode / optimize-loop. Trivial one-liner? touch <CLAUDE_DIR>/.pipeline-off (\"stop pipeline\").",
+    "pipeline:no-verify": "Fix → run a verify this session, then retry the commit: a test runner (vitest/jest/pytest/go test/cargo test), `tsc --noEmit`, a linter (eslint/biome/ruff/golangci-lint/clippy), arch-enforce, or a Playwright E2E.",
+    "effect-ca:ca": "clean-architecture — Fix → consult the skill, then retry: deps inward only, business rules free of IO/framework imports, every external concern behind a port + edge adapter, DTOs across boundaries, one composition root.",
+    "effect-ca:effect": "effect-ts — Fix → consult the skill, then retry: Effect<A,E,R> for IO, Effect.tryPromise over raw await, Data.TaggedError over throw, Effect.Service/Layer for DI, Schema at boundaries, runPromise/runFork at one entrypoint.",
+    "secret:write": "Fix → replace the literal with an env/secret-store reference (process.env.X, import.meta.env, os.environ, a secrets manager). Never write a credential to disk.",
+    "secret:commit": "Fix → unstage the secret, move it to an env var / secret store, then re-stage and commit. The flagged file:line are listed above.",
+    "loop:seed": "Fix → seed the request first: append '- [ ] (req:NEW) <request>' to TASKS.md at the repo root (git rev-parse --show-toplevel), then retry the edit.",
+    "loop:verify": "Fix → run the build/test/lint/typecheck green this session before committing on a task/<slug> branch (independent of .pipeline-off)."
+  },
+
+  "riskRouting": {
+    "_comment": "Item 2. Default OFF -> every change classifies HIGH -> full gate depth == today's behavior. Opt in by BOTH setting enabled:true here AND touching <CLAUDE_DIR>/.risk-routing-on. Missing/bad policy or unknown match -> HIGH (fail-safe, never fail-open).",
+    "enabled": false
+  },
+  "riskTierRules": [
+    { "_comment": "First match wins; default catch-all keeps everything HIGH.", "match": ".*", "tier": "HIGH" }
+  ],
+  "mergePolicy": {
+    "_comment": "Item 4 reads this for advice only; it NEVER blocks a merge.",
+    "HIGH": "full-gate-depth",
+    "LOW": "fast-path"
+  },
+
+  "gc": {
+    "_comment": "Item 4 cleanup/GC loop. Opt-in: enabled:true here AND touch <CLAUDE_DIR>/.gc-on. Soft: opens fix-up PRs, never a hard gate.",
+    "enabled": false,
+    "scanDrift": true,
+    "scanStaleDocs": true,
+    "gradesFile": "quality-grades.json"
+  },
+
+  "evidence": {
+    "_comment": "Item 5 first-class evidence. Opt-in: enabled:true here AND touch <CLAUDE_DIR>/.evidence-on. SOFT only: verify never depends on it (graceful degradation).",
+    "enabled": false,
+    "dir": "evidence",
+    "breakpoints": [390, 1440]
+  }
+}

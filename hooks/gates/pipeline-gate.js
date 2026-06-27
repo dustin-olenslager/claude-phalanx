@@ -25,6 +25,16 @@ function out(decision, reason) {
 const OFF = path.join(HERE, '.pipeline-off');
 const WARN_ONLY = process.env.PHALANX_WARN === '1';
 
+// Item 3 (gates as teachers): remediation recipes live in the policy contract
+// (<CLAUDE_DIR>/risk-policy.json). Missing file/key -> the inline fallback. Reading
+// the policy NEVER changes whether a gate fires -- only the help text it emits.
+let POLICY = {};
+try { POLICY = JSON.parse(fs.readFileSync(path.join(HERE, 'risk-policy.json'), 'utf8')); } catch {}
+const rx = (k, fallback) => {
+  const r = POLICY && POLICY.remediation && POLICY.remediation[k];
+  return (typeof r === 'string' && r.trim()) ? r : fallback;
+};
+
 let input = {};
 try { input = JSON.parse(readStdin() || '{}'); } catch { allow(); }
 if (fs.existsSync(OFF)) allow();
@@ -53,7 +63,7 @@ if (tool === 'Bash') {
   const cmd = (ti.command || '') + '';
   if (VERIFY_CMD.test(cmd)) setFlag('verified');
   if (/\bgit\b[^\n]*\bcommit\b/.test(cmd) && !hasFlag('verified')) {
-    const msg = 'Pipeline gate (§13): commit blocked — no verify ran this session. A test runner, `tsc --noEmit`, a lint (eslint/biome/ruff/golangci-lint/clippy), arch-enforce, or Playwright E2E all count. Override: touch ' + OFF + ' ("stop pipeline").';
+    const msg = 'Pipeline gate (§13): commit blocked — no verify ran this session. ' + rx('pipeline:no-verify', 'Fix → run a test runner, `tsc --noEmit`, a lint (eslint/biome/ruff/golangci-lint/clippy), arch-enforce, or a Playwright E2E, then retry the commit.') + ' Override: touch ' + OFF + ' ("stop pipeline").';
     return WARN_ONLY ? out('allow', '⚠ ' + msg) : out('deny', msg);
   }
   allow();
@@ -66,7 +76,7 @@ if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'Not
   const META = new RegExp('(^' + esc + '|/\\.claude/|^/tmp/|/node_modules/|/\\.git/|/dist/|/build/)');
   const isCode = CODE.test(fp) && !META.test(fp);
   if (isCode && !hasFlag('planned')) {
-    const msg = 'Pipeline gate (§13): code edit blocked — no plan/spec this session. Run phased-plan / system-design / write-spec (or maintain-mode / optimize-loop, or adr for architecture). Override: touch ' + OFF + ' ("stop pipeline").';
+    const msg = 'Pipeline gate (§13): code edit blocked — no plan/spec this session. ' + rx('pipeline:no-plan', 'Fix → run phased-plan / system-design / write-spec (or maintain-mode / optimize-loop, or adr for architecture), then retry the edit.') + ' Override: touch ' + OFF + ' ("stop pipeline").';
     return WARN_ONLY ? out('allow', '⚠ ' + msg) : out('deny', msg);
   }
   allow();
