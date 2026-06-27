@@ -11,5 +11,8 @@ repo="${1:?repo required}"; text="${2:?request text required}"
 id="${3:-r$$-$(date +%s 2>/dev/null || echo 0)}"
 tasks="$repo/TASKS.md"
 [ -f "$tasks" ] || printf '# TASKS\n\n' > "$tasks"
+# Flatten newlines/CR to spaces so a multi-line request stays ONE task line and
+# can't spill orphan continuation lines into TASKS.md (item 3).
+text="$(printf '%s' "$text" | tr '\r\n' '  ')"
 printf -- '- [ ] (req:%s) %s\n' "$id" "$text" >> "$tasks"
 printf '%s\n' "$id"

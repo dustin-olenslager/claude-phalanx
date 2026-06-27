@@ -22,7 +22,8 @@ echo "==> removing autonomous-loop artifacts"
 rm -f "$CLAUDE_DIR"/context-budget.js "$CLAUDE_DIR"/work-autostart.js "$CLAUDE_DIR"/work-intent.js "$CLAUDE_DIR"/work-respawn.js \
       "$CLAUDE_DIR"/run-work.sh "$CLAUDE_DIR"/run-work.ps1 "$CLAUDE_DIR"/TASKS.template.md \
       "$CLAUDE_DIR"/supervisord.sh "$CLAUDE_DIR"/phalanx-watch.sh "$CLAUDE_DIR"/notify.sh \
-      "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh
+      "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh \
+      "$CLAUDE_DIR"/gc-scan.sh "$CLAUDE_DIR"/evidence.sh
 rm -rf "$CLAUDE_DIR/agents" "$CLAUDE_DIR/commands"
 rm -rf "$CLAUDE_DIR/phalanx-templates"
 
@@ -32,7 +33,10 @@ if [ "$(git config --global --get core.hooksPath 2>/dev/null)" = "$CLAUDE_DIR/gi
   echo "    unset core.hooksPath"
 fi
 rm -rf "$CLAUDE_DIR/githooks"
-rm -f "$CLAUDE_DIR/.phalanx-update.stamp" "$CLAUDE_DIR/.phalanx-update.lock"
+rm -f "$CLAUDE_DIR/.phalanx-update.stamp" "$CLAUDE_DIR/.phalanx-update.lock" "$CLAUDE_DIR/.phalanx-checkout"
+
+echo "==> removing policy contract (created-if-absent at install)"
+rm -f "$CLAUDE_DIR/risk-policy.json"
 
 echo "==> removing phalanx crons (auto-update + watcher, if present)"
 if command -v crontab >/dev/null 2>&1; then

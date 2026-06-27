@@ -30,6 +30,9 @@ echo "==> hooks (anchors + gates -> CLAUDE_DIR root)"
 cp "$HERE"/hooks/anchors/*.sh "$CLAUDE_DIR/"
 cp "$HERE"/hooks/gates/*.js "$CLAUDE_DIR/"
 chmod +x "$CLAUDE_DIR"/*.sh "$CLAUDE_DIR"/*.js 2>/dev/null || true
+# Record the ACTUAL checkout path so phalanx-selfupdate.sh updates the right tree
+# even when CLAUDE_DIR is custom or the checkout lives outside it.
+printf '%s\n' "$HERE" > "$CLAUDE_DIR/.phalanx-checkout"
 
 echo "==> agents + commands + work-loop wrappers"
 mkdir -p "$CLAUDE_DIR/agents" "$CLAUDE_DIR/commands"

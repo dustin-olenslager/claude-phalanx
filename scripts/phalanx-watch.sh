@@ -22,7 +22,13 @@ off()           { [ -f "$1/.work-off" ] || [ -f "$CLAUDE_DIR/.work-off" ]; }
 
 started=0
 while IFS= read -r line || [ -n "$line" ]; do
-  repo="${line%%#*}"; repo="$(echo "$repo" | xargs 2>/dev/null)"
+  # Trim leading/trailing whitespace via parameter expansion (echo|xargs mangles
+  # quotes/backslashes). Treat a line as a comment ONLY if it STARTS with '#', so a
+  # valid absolute path containing '#' is preserved (item 4).
+  repo="$line"
+  repo="${repo#"${repo%%[![:space:]]*}"}"
+  repo="${repo%"${repo##*[![:space:]]}"}"
+  case "$repo" in \#*) continue ;; esac
   [ -z "$repo" ] && continue
   [ -d "$repo" ] || { echo "skip (missing dir): $repo"; continue; }
   if off "$repo";      then echo "skip (.work-off): $repo"; continue; fi

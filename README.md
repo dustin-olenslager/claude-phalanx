@@ -201,8 +201,9 @@ gates are conveniences with documented off-switches, not a sandbox.
 Manual audit: `scripts/leak-scan.sh --personal`. False positive on a *non-public* repo:
 `git push --no-verify` (never for claude-phalanx).
 
-Auto-update: the daily/6-hourly cron plus a throttled, lock-guarded `phalanx-selfupdate.sh`
-SessionStart hook keep every instance on the latest release tag. Disable updates with
+Auto-update: an opt-in daily cron (`0 5 * * *`, enable with `PHALANX_CRON=1 ./install.sh`)
+plus a throttled (default 4h), lock-guarded `phalanx-selfupdate.sh` SessionStart hook that
+fires on its own and keeps every instance on the latest release tag. Disable updates with
 `touch ~/.claude/.no-autoupdate`.
 
 ## Uninstall
