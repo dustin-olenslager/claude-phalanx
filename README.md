@@ -135,6 +135,14 @@ Phalanx owns the **engine** (loop, supervisor, gates) and a notify **port**; the
 messengers (Telegram, WhatsApp, …) are **edge adapters** — kept out of this public repo
 so no bot tokens/infra leak in. An adapter only implements the port:
 
+> **Reference adapter: [Herald](https://github.com/dustin-olenslager/claude-herald).**
+> A self-hosted Telegram bot that implements this notify port (`POST /event` ⇽
+> `PHALANX_NOTIFY_URL`) and drives the supervisor for you: send a request from your
+> phone, Herald seeds the task and launches the detached supervisor, then streams
+> `start`/`progress`/`done`/`blocked` back into a per-job Telegram topic. The whole
+> no-babysit loop, run from your couch. You don't need it — any `PHALANX_NOTIFY_CMD`/
+> `PHALANX_NOTIFY_URL` sink works — but it's the turnkey one.
+
 - `notify.sh` posts lifecycle events (`start`/`progress`/`done`/`blocked`) to
   `PHALANX_NOTIFY_CMD` (`<cmd> <event> <message> <repo> <thread>`) or `PHALANX_NOTIFY_URL`
   (JSON `{event,message,repo,host,thread}`).
