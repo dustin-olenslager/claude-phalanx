@@ -8,6 +8,7 @@
 // one run; no cross-turn continuation, no backlog walking.
 const fs = require("fs");
 const path = require("path");
+const H = require("./lib/phalanx-hook.js");
 
 const CLAUDE_DIR = __dirname;
 
@@ -16,22 +17,12 @@ function cont(reason) {
   process.exit(0);
 }
 function stop() { process.exit(0); }
-function readInput() {
-  try { return JSON.parse(fs.readFileSync(0, "utf8") || "{}"); }
-  catch { return {}; }
-}
+const readInput = H.readInput;
 
 // A supervisor (run-work.sh) relaunches fresh `claude -p` passes itself; when one
 // is live, this session must just END (the supervisor continues) -- never block to
 // drive the same session on, and never emit a "/clear" instruction (item 4).
-function supervisorActive(dir) {
-  if (process.env.PHALANX_SUPERVISOR === "1") return true;
-  try {
-    const pid = parseInt(fs.readFileSync(path.join(dir, ".claude-runs", "supervisor.pid"), "utf8").trim(), 10);
-    if (pid > 0) { process.kill(pid, 0); return true; }
-  } catch {}
-  return false;
-}
+const supervisorActive = H.supervisorActive;
 
 // On a context-ceiling RESPAWN in a bare interactive session (no supervisor yet),
 // hand off to a detached supervisor instead of asking a human to /clear -- it
@@ -58,16 +49,10 @@ if (supervisorActive(cwd)) stop();
 // Guard against infinite loops.
 if (input.stop_hook_active) stop();
 
-if (fs.existsSync(path.join(cwd, ".work-off"))) stop();
-if (fs.existsSync(path.join(CLAUDE_DIR, ".work-off"))) stop();
+if (H.killSwitched(cwd, CLAUDE_DIR)) stop();
 
-const tasks = path.join(cwd, "TASKS.md");
-let open = 0;
-try {
-  const txt = fs.readFileSync(tasks, "utf8");
-  const m = txt.match(/^\s*-\s*\[\s*\]/gm);
-  open = m ? m.length : 0;
-} catch { stop(); }
+try { fs.readFileSync(path.join(cwd, "TASKS.md"), "utf8"); } catch { stop(); }
+const open = H.openTaskCount(cwd);
 if (open === 0) stop();
 
 // Authoritative human-halt sentinel (item 1): control flow must NOT depend on a
