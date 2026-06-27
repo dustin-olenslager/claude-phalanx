@@ -10,7 +10,12 @@
 #     ONLY when behind. Synchronous but rare (real work happens just after a tag).
 # Silent always. Disable updates: touch $CLAUDE_DIR/.no-autoupdate.
 CLAUDE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CO="$CLAUDE_DIR/phalanx"
+# install.sh records the ACTUAL checkout path here; without it a custom CLAUDE_DIR
+# (or a checkout living outside CLAUDE_DIR) silently disables auto-update.
+if [ -f "$CLAUDE_DIR/.phalanx-checkout" ]; then
+  CO="$(cat "$CLAUDE_DIR/.phalanx-checkout" 2>/dev/null)"
+fi
+CO="${CO:-$CLAUDE_DIR/phalanx}"
 THROTTLE_SECS="${PHALANX_UPDATE_THROTTLE:-14400}"
 STAMP="$CLAUDE_DIR/.phalanx-update.stamp"
 LOCK="$CLAUDE_DIR/.phalanx-update.lock"

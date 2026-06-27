@@ -18,14 +18,38 @@ repo="${PHALANX_REPO:-$(pwd)}"
 host="$(hostname 2>/dev/null || echo unknown)"
 thread="${PHALANX_NOTIFY_THREAD:-$(basename "$repo" 2>/dev/null || echo repo)}"
 
-esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# Robust JSON object: escapes newlines/tabs/control chars, not just quotes. Prefer
+# python3 (present on the targets), then jq, then a more complete sed fallback.
+build_json() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys
+k=["event","message","repo","host","thread"]
+print(json.dumps(dict(zip(k,sys.argv[1:]))))' "$event" "$msg" "$repo" "$host" "$thread"
+  elif command -v jq >/dev/null 2>&1; then
+    jq -n --arg event "$event" --arg message "$msg" --arg repo "$repo" \
+      --arg host "$host" --arg thread "$thread" \
+      '{event:$event,message:$message,repo:$repo,host:$host,thread:$thread}'
+  else
+    esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g'; }
+    printf '{"event":"%s","message":"%s","repo":"%s","host":"%s","thread":"%s"}' \
+      "$(esc "$event")" "$(esc "$msg")" "$(esc "$repo")" "$(esc "$host")" "$(esc "$thread")"
+  fi
+}
+
+# ALWAYS append the event to the local log, regardless of remote sink (item 2).
+LOGDIR="${PHALANX_LOGDIR:-$repo/.claude-runs}"
+mkdir -p "$LOGDIR" 2>/dev/null || true
+ev_ts="$(date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 0)"
+flat_msg="$(printf '%s' "$msg" | tr '\n\t' '  ')"
+printf '%s\t%s\t%s\t%s\n' "$ev_ts" "$event" "$thread" "$flat_msg" >> "$LOGDIR/events.log" 2>/dev/null || true
 
 if [ -n "${PHALANX_NOTIFY_CMD:-}" ]; then
-  "$PHALANX_NOTIFY_CMD" "$event" "$msg" "$repo" "$thread" >/dev/null 2>&1 || true
+  "$PHALANX_NOTIFY_CMD" "$event" "$msg" "$repo" "$thread" >/dev/null 2>&1 \
+    || printf '%s\tWARN\t%s\tnotify-cmd failed\n' "$ev_ts" "$thread" >> "$LOGDIR/events.log" 2>/dev/null || true
 elif [ -n "${PHALANX_NOTIFY_URL:-}" ] && command -v curl >/dev/null 2>&1; then
-  json=$(printf '{"event":"%s","message":"%s","repo":"%s","host":"%s","thread":"%s"}' \
-    "$(esc "$event")" "$(esc "$msg")" "$(esc "$repo")" "$(esc "$host")" "$(esc "$thread")")
-  curl -s -m 10 -X POST -H 'Content-Type: application/json' -d "$json" "$PHALANX_NOTIFY_URL" >/dev/null 2>&1 || true
+  json="$(build_json)"
+  curl -s -m 10 -X POST -H 'Content-Type: application/json' -d "$json" "$PHALANX_NOTIFY_URL" >/dev/null 2>&1 \
+    || printf '%s\tWARN\t%s\tcurl POST failed\n' "$ev_ts" "$thread" >> "$LOGDIR/events.log" 2>/dev/null || true
 else
   printf '[phalanx:%s/%s] %s\n' "$event" "$thread" "$msg"
 fi
