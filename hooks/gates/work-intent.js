@@ -8,36 +8,21 @@
 //   - the prompt shows no code-mutation intent.
 // Does NOT restate the full decision tree (that lives in the SessionStart
 // injection); one line only, to respect token-conservation rules.
-const fs = require("fs");
-const path = require("path");
+const H = require("./lib/phalanx-hook.js");
 
 const CLAUDE_DIR = __dirname;
 
-function emit(ctx) {
-  if (ctx) process.stdout.write(JSON.stringify({
-    hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: ctx },
-  }));
-  process.exit(0);
-}
-function readInput() {
-  try { return JSON.parse(fs.readFileSync(0, "utf8") || "{}"); }
-  catch { return {}; }
-}
+const emit = (ctx) => H.emit("UserPromptSubmit", ctx);
+const readInput = H.readInput;
 
 const input = readInput();
 const cwd = input.cwd || process.cwd();
 const prompt = (input.prompt || "").trim();
 
-if (fs.existsSync(path.join(cwd, ".work-off"))) emit("");
-if (fs.existsSync(path.join(CLAUDE_DIR, ".work-off"))) emit("");
+if (H.killSwitched(cwd, CLAUDE_DIR)) emit("");
 
 // If a loop is already live (open TASKS.md items), one terse re-anchor and done.
-let open = 0;
-try {
-  const txt = fs.readFileSync(path.join(cwd, "TASKS.md"), "utf8");
-  const m = txt.match(/^\s*-\s*\[\s*\]/gm);
-  open = m ? m.length : 0;
-} catch {}
+const open = H.openTaskCount(cwd);
 if (open > 0) {
   emit("Phalanx loop active: keep driving the seeded task(s) via the orchestrator; do not hand-code outside the loop.");
 }

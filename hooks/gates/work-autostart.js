@@ -9,33 +9,20 @@
 //   <repo>/.work-off (per-repo) or <CLAUDE_DIR>/.work-off (global).
 const fs = require("fs");
 const path = require("path");
+const H = require("./lib/phalanx-hook.js");
 
 const CLAUDE_DIR = __dirname;
 
-function emit(ctx) {
-  if (ctx) process.stdout.write(JSON.stringify({
-    hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: ctx },
-  }));
-  process.exit(0);
-}
-function readInput() {
-  try { return JSON.parse(fs.readFileSync(0, "utf8") || "{}"); }
-  catch { return {}; }
-}
+const emit = (ctx) => H.emit("SessionStart", ctx);
+const readInput = H.readInput;
 
 const input = readInput();
 const cwd = input.cwd || process.cwd();
 const ONESHOT = process.env.PHALANX_ONESHOT === "1";
 
-if (fs.existsSync(path.join(cwd, ".work-off"))) emit("");
-if (fs.existsSync(path.join(CLAUDE_DIR, ".work-off"))) emit("");
+if (H.killSwitched(cwd, CLAUDE_DIR)) emit("");
 
-let open = 0;
-try {
-  const txt = fs.readFileSync(path.join(cwd, "TASKS.md"), "utf8");
-  const m = txt.match(/^\s*-\s*\[\s*\]/gm);
-  open = m ? m.length : 0;
-} catch {}
+const open = H.openTaskCount(cwd);
 
 let blocked = false, respawn = false;
 try {

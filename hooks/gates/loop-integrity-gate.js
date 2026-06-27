@@ -19,16 +19,12 @@
 const fs = require("fs");
 const path = require("path");
 const cp = require("child_process");
+const H = require("./lib/phalanx-hook.js");
 const HERE = __dirname;
 
-function readStdin() { try { return fs.readFileSync(0, "utf8"); } catch { return ""; } }
+const readStdin = H.readStdin;
 function allow() { process.exit(0); }
-function out(decision, reason) {
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: decision, permissionDecisionReason: reason },
-  }));
-  process.exit(0);
-}
+const out = (decision, reason) => H.decide("PreToolUse", decision, reason);
 
 const WARN_ONLY = process.env.PHALANX_WARN === "1";
 
@@ -56,17 +52,16 @@ try {
 } catch { allow(); }
 
 // Honor the kill switches -- an explicit stop means don't gate.
-if (fs.existsSync(path.join(cwd, ".work-off"))) allow();
-if (fs.existsSync(path.join(HERE, ".work-off"))) allow();
+if (H.killSwitched(cwd, HERE)) allow();
 
 const tool = input.tool_name || "";
 const ti = input.tool_input || {};
-const sid = (input.session_id || "nosess").replace(/[^a-zA-Z0-9_-]/g, "");
-const stateDir = path.join("/tmp/phalanx-pipeline", sid); // shared with pipeline-gate
-const verified = () => { try { return fs.existsSync(path.join(stateDir, "verified")); } catch { return false; } };
-const setVerified = () => { try { fs.mkdirSync(stateDir, { recursive: true }); fs.writeFileSync(path.join(stateDir, "verified"), "1"); } catch {} };
+const stateDir = H.stateDir("/tmp/phalanx-pipeline", input.session_id); // shared with pipeline-gate
+const { hasFlag, setFlag } = H.flagHelpers(stateDir);
+const verified = () => hasFlag("verified");
+const setVerified = () => setFlag("verified");
 
-const VERIFY_CMD = /(playwright|\be2e\b|vitest|jest|flutter\s+test|pytest|\bgo\s+test\b|cargo\s+test|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test|yarn\s+test|cypress|\btsc\b|--noEmit|typecheck|eslint|biome|\bruff\b|golangci-lint|clippy|\blint\b|depcruise|dependency-cruiser|import-linter|archunit|\bverify\b)/i;
+const VERIFY_CMD = H.VERIFY_CMD;
 
 if (tool === "Bash") {
   const cmd = (ti.command || "") + "";
@@ -86,10 +81,7 @@ if (tool === "Bash") {
 
 if (tool === "Edit" || tool === "Write" || tool === "MultiEdit" || tool === "NotebookEdit") {
   const fp = (ti.file_path || ti.notebook_path || "") + "";
-  const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|dart|py|go|rs|java|kt|kts|sql|vue|svelte|rb|php|c|h|cpp|hpp|cs|swift|scala|ex|exs)$/i;
-  const esc = HERE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const META = new RegExp("(^" + esc + "|/\\.claude/|^/tmp/|/node_modules/|/\\.git/|/dist/|/build/)");
-  const isCode = CODE.test(fp) && !META.test(fp);
+  const isCode = H.CODE.test(fp) && !H.metaRe(HERE).test(fp);
   if (isCode && open === 0) {
     const msg = "Loop-integrity gate (item 5a): edit to " + fp + " blocked -- the loop has no seeded task (0 open items in TASKS.md). " + rx("loop:seed", "Fix → seed the request first: append '- [ ] (req:NEW) <request>' to TASKS.md at the repo root, then retry.");
     return WARN_ONLY ? out("allow", "WARN " + msg) : out("deny", msg);

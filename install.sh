@@ -29,6 +29,10 @@ cp -R "$HERE/skills/." "$CLAUDE_DIR/skills/"
 echo "==> hooks (anchors + gates -> CLAUDE_DIR root)"
 cp "$HERE"/hooks/anchors/*.sh "$CLAUDE_DIR/"
 cp "$HERE"/hooks/gates/*.js "$CLAUDE_DIR/"
+# Shared gate primitives. Gates require it as ./lib/phalanx-hook.js relative to
+# their own dir, so it MUST sit beside them at CLAUDE_DIR/lib/.
+mkdir -p "$CLAUDE_DIR/lib"
+cp "$HERE"/hooks/gates/lib/*.js "$CLAUDE_DIR/lib/"
 chmod +x "$CLAUDE_DIR"/*.sh "$CLAUDE_DIR"/*.js 2>/dev/null || true
 # Record the ACTUAL checkout path so phalanx-selfupdate.sh updates the right tree
 # even when CLAUDE_DIR is custom or the checkout lives outside it.
@@ -95,6 +99,7 @@ else HOOK_BASE="$CLAUDE_DIR"; fi
 node "$HERE/scripts/merge-settings.mjs" "$SETTINGS" "$HERE/settings/fragment.json" "$HOOK_BASE"
 
 echo "==> validate (node --check + JSON parse)"
+node --check "$CLAUDE_DIR/lib/phalanx-hook.js" && echo "    node --check lib/phalanx-hook.js ok"
 for g in pipeline-gate effect-ca-gate secret-gate loop-integrity-gate context-budget work-autostart work-intent work-respawn; do
   node --check "$CLAUDE_DIR/$g.js" && echo "    node --check $g.js ok"
 done
@@ -118,7 +123,9 @@ LEAK="AKIA""Z3QJ5K7N2WX4Y6PB"
 
 # Run gates from an isolated temp dir so live OFF-switch files (.pipeline-off etc.)
 # and the operator's runtime env don't skew the logic self-test.
-TG="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-tg)"; mkdir -p "$TG"
+TG="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-tg)"; mkdir -p "$TG/lib"
+# the gates require ./lib/phalanx-hook.js -- seed the temp dir with a sibling lib/.
+cp "$CLAUDE_DIR"/lib/*.js "$TG/lib/" 2>/dev/null || true
 for j in pipeline-gate effect-ca-gate secret-gate loop-integrity-gate context-budget work-autostart work-respawn; do
   cp "$CLAUDE_DIR/$j.js" "$TG/" 2>/dev/null || true
 done
@@ -168,7 +175,7 @@ o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\
 # so ROUTING_ON is false -- the asserts above prove the unchanged path). Here: switch +
 # enabled policy + a LOW rule fast-paths a LOW code edit; HIGH still blocks; and neither
 # the switch alone nor an enabled-policy alone routes (double-key opt-in, data master wins).
-RR="$TG/rr"; mkdir -p "$RR"; cp "$CLAUDE_DIR/pipeline-gate.js" "$RR/"
+RR="$TG/rr"; mkdir -p "$RR/lib"; cp "$CLAUDE_DIR"/lib/*.js "$RR/lib/" 2>/dev/null || true; cp "$CLAUDE_DIR/pipeline-gate.js" "$RR/"
 cat > "$RR/risk-policy.json" <<'JSON'
 { "riskRouting": { "enabled": true }, "riskTierRules": [ { "match": "\\.go$", "tier": "LOW" }, { "match": ".*", "tier": "HIGH" } ] }
 JSON
