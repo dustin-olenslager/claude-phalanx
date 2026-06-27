@@ -229,8 +229,9 @@ const TS = /\.(ts|tsx|mts|cts)$/i;
 const VERIFY_CMD = /(playwright|\be2e\b|vitest|jest|flutter\s+test|pytest|\bgo\s+test\b|cargo\s+test|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test|yarn\s+test|cypress|\btsc\b|--noEmit|typecheck|eslint|biome|\bruff\b|golangci-lint|clippy|\blint\b|depcruise|dependency-cruiser|import-linter|archunit|\bverify\b)/i;
 
 // ── Autonomous merge-on-green into main (loop-integrity rule 5c) ──────────────
-// A `git merge` …                           (the moment task code becomes main)
-const GIT_MERGE = /\bgit\b[^\n]*\bmerge\b/;
+// The `git merge` SUBCOMMAND specifically — NOT the word "merge" anywhere after git
+// (which false-fired on `git checkout -b task/merge-x` and `git commit -m "...merge..."`).
+const GIT_MERGE = /\bgit\s+merge\b/;
 // …whose TARGET is main: either we are already on main, or the same command line
 // checks out / switches to main first (the canonical `git checkout main && git merge`).
 const CHECKOUT_MAIN = /\bgit\b[^\n]*\b(checkout|switch)\b[^\n]*\b(main|master)\b/;
@@ -270,6 +271,32 @@ function deployScript(cwd) {
     return fs.existsSync(p) ? p : "";
   } catch { return ""; }
 }
+// Per-repo OPT-IN to UNATTENDED auto-run by the watch cron. DISTINCT from auto-merge:
+// "may the watcher launch a supervisor here on its own" is a different question from
+// "may a run merge to main". After the 2026-06-27 fleet runaway, enabling merge no
+// longer implies the watcher will auto-drive a backlog — that needs this marker.
+function autorunEnabled(cwd) {
+  try { return fs.existsSync(path.join(repoRoot(cwd), ".phalanx-autorun")); } catch { return false; }
+}
+
+// A path that looks like a DB migration (schema change). Used to keep migration-bearing
+// work out of the autonomous merge→deploy path: deploying code whose migration is not yet
+// applied to prod 500s. The orchestrator/operator applies + signs off, then merges by hand.
+const MIGRATION_PATH = /(^|\/)(drizzle|migrations?|migrate|db\/migrate|prisma\/migrations|alembic|liquibase|flyway)\/.*\.(sql|ts|js|mjs|cjs|py|rb|xml|ya?ml)$/i;
+function pathsTouchMigration(paths) {
+  return (paths || []).some((p) => MIGRATION_PATH.test((p || "").trim()));
+}
+// True iff merging <branch> into the current main would introduce a migration file. Pure
+// list comes from `git diff --name-only main..<branch>`; the regex test is unit-tested.
+function branchTouchesMigration(cwd, branch) {
+  if (!branch) return false;
+  try {
+    const out = cp.execFileSync("git", ["diff", "--name-only", "main..." + branch], {
+      cwd, timeout: 5000, stdio: ["ignore", "pipe", "ignore"],
+    }).toString();
+    return pathsTouchMigration(out.split(/\r?\n/));
+  } catch { return false; }
+}
 
 module.exports = {
   readStdin, readInput,
@@ -281,5 +308,6 @@ module.exports = {
   stateDir, flagHelpers, metaRe,
   repoRoot, currentBranch, markVerified, verifyFlagFresh, verifyFlagFreshFor,
   GIT_MERGE, CHECKOUT_MAIN, PUSH_MAIN, mergedBranch, autoMergeEnabled, deployScript,
+  autorunEnabled, MIGRATION_PATH, pathsTouchMigration, branchTouchesMigration,
   CODE, TS, VERIFY_CMD,
 };
