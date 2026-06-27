@@ -56,6 +56,10 @@ function openTaskCount(cwd) {
 const RISK = /(data[- ]?loss|data[- ]?continuity|irreversible|(won'?t|will ?not) be (in|captured)|(can'?t|cannot) be undone|drop\s+(table|column|database)|delete[sd]?\s+prod|destructive|truncate\b|migration cutover|cutover|backfill|\bwipe\b)/i;
 // Standard tail window for scanning append-only PROGRESS.md for the RESPAWN marker.
 const RESPAWN_WINDOW = 600;
+// An ACTIVE human-halt directive: a line that is (optionally indented, optional
+// single leading "- ") exactly `BLOCKED:`. NOT prose/tables/headers that merely
+// mention the word ("### BLOCKED", "| (BLOCKED -- skipped) |", "was BLOCKED on").
+const BLOCKED_RE = /^[ \t]*-?[ \t]*BLOCKED:/m;
 
 function readRepoFile(cwd, name) {
   try { return fs.readFileSync(path.join(cwd, name), "utf8"); } catch { return ""; }
@@ -65,6 +69,18 @@ function readRepoFile(cwd, name) {
 function openCount(tasksText) {
   const m = (tasksText || "").match(/^\s*-\s*\[\s*\]/gm);
   return m ? m.length : 0;
+}
+
+// True iff PROGRESS.md carries an ACTIVE BLOCKED: halt directive (not mere prose).
+function blockedDirective(progressText) {
+  return BLOCKED_RE.test(progressText || "");
+}
+
+// The first active BLOCKED: directive line, trimmed (to seed the sentinel file),
+// else the bare word "BLOCKED".
+function blockedLine(progressText) {
+  const m = (progressText || "").match(/^[ \t]*-?[ \t]*BLOCKED:.*$/m);
+  return m ? m[0].trim() : "BLOCKED";
 }
 
 // A RESPAWN checkpoint is ACTIVE only when the most recent RESPAWN within the
@@ -98,7 +114,7 @@ function tasksState(cwd) {
   const progress = readRepoFile(cwd, "PROGRESS.md");
   return {
     open: openCount(tasks),
-    blocked: /BLOCKED/.test(progress),
+    blocked: blockedDirective(progress),
     respawn: respawnActive(progress),
     riskLine: riskLineOf(tasks, progress),
   };
@@ -207,7 +223,8 @@ module.exports = {
   readStdin, readInput,
   emit, decide,
   openTaskCount, killSwitched, supervisorActive,
-  RISK, RESPAWN_WINDOW, readRepoFile, openCount,
+  RISK, RESPAWN_WINDOW, BLOCKED_RE, readRepoFile, openCount,
+  blockedDirective, blockedLine,
   respawnActive, respawnPresent, riskLineOf, tasksState,
   stateDir, flagHelpers, metaRe,
   repoRoot, currentBranch, markVerified, verifyFlagFresh,

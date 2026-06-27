@@ -64,11 +64,10 @@ try {
 } catch {}
 try {
   const p = fs.readFileSync(path.join(cwd, "PROGRESS.md"), "utf8");
-  if (/BLOCKED/.test(p)) {
+  if (H.blockedDirective(p)) {
     try {
       fs.mkdirSync(path.join(cwd, ".claude-runs"), { recursive: true });
-      const m = p.match(/.*BLOCKED.*/);
-      fs.writeFileSync(path.join(cwd, ".claude-runs", "BLOCKED"), (m ? m[0] : "BLOCKED") + "\n");
+      fs.writeFileSync(path.join(cwd, ".claude-runs", "BLOCKED"), H.blockedLine(p) + "\n");
     } catch {}
     stop();
   }
