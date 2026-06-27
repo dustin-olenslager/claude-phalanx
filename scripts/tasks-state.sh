@@ -9,9 +9,12 @@
 # >=1 open `- [ ]` item in $1/TASKS.md.
 ts_has_open() { [ -f "$1/TASKS.md" ] && grep -Eq '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]' "$1/TASKS.md"; }
 
-# A BLOCKED line exists anywhere in $1/PROGRESS.md (WHOLE file: a verbose pass must
-# not push it out of a tail window).
-ts_blocked() { [ -f "$1/PROGRESS.md" ] && grep -q 'BLOCKED' "$1/PROGRESS.md"; }
+# An ACTIVE `BLOCKED:` halt directive exists anywhere in $1/PROGRESS.md (WHOLE
+# file: a verbose pass must not push it out of a tail window). Matches only an
+# optionally-indented, optional single leading "- ", then `BLOCKED:` -- NOT prose/
+# tables/headers that merely mention the word.
+ts_blocked() { [ -f "$1/PROGRESS.md" ] && grep -Eq '^[[:space:]]*-?[[:space:]]*BLOCKED:' "$1/PROGRESS.md"; }
 
-# First BLOCKED line of $1/PROGRESS.md (to seed the sentinel), else the word BLOCKED.
-ts_blocked_line() { grep -m1 'BLOCKED' "$1/PROGRESS.md" 2>/dev/null || echo BLOCKED; }
+# First active BLOCKED: directive line of $1/PROGRESS.md (to seed the sentinel),
+# else the word BLOCKED.
+ts_blocked_line() { grep -Em1 '^[[:space:]]*-?[[:space:]]*BLOCKED:' "$1/PROGRESS.md" 2>/dev/null || echo BLOCKED; }

@@ -27,4 +27,19 @@ assert.equal(H.riskLineOf("- [x] drop table users", ""), ""); // CHECKED task ig
 assert.equal(H.riskLineOf("- [ ] safe work", "note: irreversible cutover ahead"), "note: irreversible cutover ahead");
 assert.equal(H.riskLineOf("- [ ] safe", "all fine"), "");
 
+// blockedDirective: only an ACTIVE `BLOCKED:` halt directive -> true; mere prose/
+// tables/headers mentioning the word -> false (the nexalog false-halt fix).
+assert.equal(H.blockedDirective("### BLOCKED / skipped"), false);
+assert.equal(H.blockedDirective("| D2 | (BLOCKED — skipped) |"), false);
+assert.equal(H.blockedDirective("the 3 BLOCKED"), false);
+assert.equal(H.blockedDirective("was BLOCKED on a table"), false);
+assert.equal(H.blockedDirective("- **F1** — BLOCKED: x"), false);
+assert.equal(H.blockedDirective("BLOCKED: needs operator"), true);
+assert.equal(H.blockedDirective("  BLOCKED: x"), true);
+assert.equal(H.blockedDirective("- BLOCKED: x"), true);
+
+// blockedLine: returns the active directive (trimmed), else the word BLOCKED.
+assert.equal(H.blockedLine("notes\n  BLOCKED: needs operator\nmore"), "BLOCKED: needs operator");
+assert.equal(H.blockedLine("the 3 BLOCKED items"), "BLOCKED");
+
 console.log("ok: tasks-state lib helpers pass");
