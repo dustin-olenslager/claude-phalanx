@@ -8,6 +8,11 @@
  *                             (cwd TASKS.md exists but has 0 open '- [ ]' items).
  *   (b) verify-before-commit: block `git commit` on a task/<slug> branch unless a
  *                             verify/test ran green this pass (cross-pass flag).
+ *   (c) merge-on-green       : block a merge INTO main unless the repo opted in
+ *                             (.phalanx-automerge) AND the MERGED branch has a fresh
+ *                             green verify flag. Non-bypassable (ignores PHALANX_WARN);
+ *                             never merge on red. This is the only autonomous path to
+ *                             prod authority -- default OFF, per-repo opt-in.
  * Active ONLY in loop-managed repos -- cwd has a TASKS.md. Silent everywhere else,
  * so ordinary repos are untouched. Respects the .work-off kill switch (don't fight
  * an explicit stop). Warn-only under PHALANX_WARN=1 (bot); hard-block otherwise.
@@ -55,6 +60,29 @@ const VERIFY_CMD = H.VERIFY_CMD;
 
 if (tool === "Bash") {
   const cmd = (ti.command || "") + "";
+
+  // (c) merge-on-green into main -- the highest-stakes power (autonomous prod authority).
+  // Fires only when the merge TARGET is clearly main (already on main, or a checkout/
+  // switch main in the same command). Two HARD requirements, BOTH non-bypassable -- this
+  // deny IGNORES PHALANX_WARN (unlike 5a/5b), so neither the bot nor a muted pipeline can
+  // ever merge unreviewed code: (i) per-repo opt-in .phalanx-automerge, (ii) a fresh GREEN
+  // verify for the MERGED branch (checked by source-branch name, since the merge runs FROM
+  // main). NEVER merge on red.
+  if (H.GIT_MERGE.test(cmd)) {
+    const br = H.currentBranch(cwd);
+    const intoMain = br === "main" || br === "master" || H.CHECKOUT_MAIN.test(cmd);
+    if (intoMain) {
+      const root = H.repoRoot(cwd);
+      if (!H.autoMergeEnabled(cwd)) {
+        return out("deny", "Loop-integrity gate (item 5c): merge into main blocked -- autonomous merge is NOT enabled for this repo. Fix → open a PR for human review (push the task branch, `gh pr create`). To authorize autonomous merge for this repo, the operator creates the marker: `touch " + root + "/.phalanx-automerge` (default OFF; non-bypassable).");
+      }
+      const src = H.mergedBranch(cmd);
+      if (!src || !H.verifyFlagFreshFor(cwd, src)) {
+        return out("deny", "Loop-integrity gate (item 5c): merge of '" + (src || "?") + "' into main blocked -- no GREEN verify recorded for that branch this pass. Fix → check out the task branch, run the build/test/lint/typecheck GREEN, then merge. NEVER merges on red (non-bypassable, ignores PHALANX_WARN).");
+      }
+    }
+  }
+
   if (/\bgit\b[^\n]*\bcommit\b/.test(cmd)) {
     const branch = H.currentBranch(cwd);
     // Cross-pass verify flag (written by pipeline-gate) OR a verify chained into this
