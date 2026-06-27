@@ -29,6 +29,14 @@ sup_alive() {
   return 0
 }
 off()           { [ -f "$1/.work-off" ] || [ -f "$CLAUDE_DIR/.work-off" ]; }
+# A repo HALTED for a human (the BLOCKED sentinel was materialized, or PROGRESS.md
+# carries a BLOCKED line the supervisor would trip on) must NOT be relaunched --
+# otherwise the watcher churns it every pass (start -> block-after-0-passes -> stop)
+# and spams notifications. It stays skipped until the human clears the block. Uses
+# the SAME detection as run-work.sh via the shared tasks-state.sh reader.
+TS_LIB="$HERE/tasks-state.sh"; [ -f "$TS_LIB" ] || TS_LIB="$CLAUDE_DIR/tasks-state.sh"
+[ -f "$TS_LIB" ] && . "$TS_LIB"
+blocked() { [ -f "$1/.claude-runs/BLOCKED" ] || { declare -F ts_blocked >/dev/null && ts_blocked "$1"; }; }
 
 started=0
 while IFS= read -r line || [ -n "$line" ]; do
@@ -42,6 +50,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   [ -z "$repo" ] && continue
   [ -d "$repo" ] || { echo "skip (missing dir): $repo"; continue; }
   if off "$repo";      then echo "skip (.work-off): $repo"; continue; fi
+  if blocked "$repo";  then echo "skip (BLOCKED, awaiting human): $repo"; continue; fi
   if ! has_open "$repo"; then continue; fi
   if sup_alive "$repo"; then echo "skip (already supervised): $repo"; continue; fi
   echo "starting supervisor for $repo"
