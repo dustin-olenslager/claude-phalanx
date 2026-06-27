@@ -47,11 +47,11 @@ cp "$HERE"/scripts/run-work.sh "$HERE"/scripts/run-work.ps1 "$CLAUDE_DIR/" 2>/de
 # request-scoped seed/unseed, and the Telegram bot hand-off entrypoint.
 cp "$HERE"/scripts/supervisord.sh "$HERE"/scripts/phalanx-watch.sh "$HERE"/scripts/notify.sh \
    "$HERE"/scripts/seed-task.sh "$HERE"/scripts/unseed-task.sh "$HERE"/scripts/bot-handoff.sh \
-   "$HERE"/scripts/gc-scan.sh "$HERE"/scripts/evidence.sh "$CLAUDE_DIR/" 2>/dev/null || true
+   "$CLAUDE_DIR/" 2>/dev/null || true
 cp "$HERE"/TASKS.template.md "$CLAUDE_DIR/" 2>/dev/null || true
 chmod +x "$CLAUDE_DIR"/run-work.sh "$CLAUDE_DIR"/supervisord.sh "$CLAUDE_DIR"/phalanx-watch.sh \
          "$CLAUDE_DIR"/notify.sh "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh \
-         "$CLAUDE_DIR"/gc-scan.sh "$CLAUDE_DIR"/evidence.sh 2>/dev/null || true
+         2>/dev/null || true
 
 echo "==> templates (state + dependency-cruiser + policy)"
 cp "$HERE"/state/*.json "$CLAUDE_DIR/phalanx-templates/state/"
@@ -103,7 +103,7 @@ node --check "$CLAUDE_DIR/lib/phalanx-hook.js" && echo "    node --check lib/pha
 for g in pipeline-gate effect-ca-gate secret-gate loop-integrity-gate context-budget work-autostart work-intent work-respawn; do
   node --check "$CLAUDE_DIR/$g.js" && echo "    node --check $g.js ok"
 done
-for s in run-work supervisord phalanx-watch notify seed-task unseed-task bot-handoff gc-scan evidence; do
+for s in run-work supervisord phalanx-watch notify seed-task unseed-task bot-handoff; do
   bash -n "$CLAUDE_DIR/$s.sh" && echo "    bash -n $s.sh ok"
 done
 for h in caveman-anchor app-pipeline-anchor ts-arch-anchor phase-anchor phalanx-selfupdate; do
@@ -171,25 +171,6 @@ o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\
 fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ruff check .\"},\"session_id\":\"phalanx-lint\"}" >/dev/null
 o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"session_id\":\"phalanx-lint\"}"); expect_allow "pipeline:commit-after-lint" x "$o"
 
-# item 2 risk routing: default OFF == identical to today ($TG has no risk-policy.json
-# so ROUTING_ON is false -- the asserts above prove the unchanged path). Here: switch +
-# enabled policy + a LOW rule fast-paths a LOW code edit; HIGH still blocks; and neither
-# the switch alone nor an enabled-policy alone routes (double-key opt-in, data master wins).
-RR="$TG/rr"; mkdir -p "$RR/lib"; cp "$CLAUDE_DIR"/lib/*.js "$RR/lib/" 2>/dev/null || true; cp "$CLAUDE_DIR/pipeline-gate.js" "$RR/"
-cat > "$RR/risk-policy.json" <<'JSON'
-{ "riskRouting": { "enabled": true }, "riskTierRules": [ { "match": "\\.go$", "tier": "LOW" }, { "match": ".*", "tier": "HIGH" } ] }
-JSON
-rrfire() { echo "$2" | PHALANX_WARN= node "$RR/$1"; }
-o=$(rrfire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/p/a.go\"},\"session_id\":\"rr0\"}"); expect_deny "risk:no-switch-blocks" x "$o"
-touch "$RR/.risk-routing-on"
-o=$(rrfire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/p/a.go\"},\"session_id\":\"rr1\"}"); expect_allow "risk:low-fastpath-allows" x "$o"
-o=$(rrfire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/p/a.rs\"},\"session_id\":\"rr1\"}"); expect_deny "risk:high-still-blocks" x "$o"
-cat > "$RR/risk-policy.json" <<'JSON'
-{ "riskRouting": { "enabled": false }, "riskTierRules": [ { "match": "\\.go$", "tier": "LOW" } ] }
-JSON
-o=$(rrfire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/p/a.go\"},\"session_id\":\"rr2\"}"); expect_deny "risk:policy-disabled-blocks" x "$o"
-rm -rf "$RR"
-
 # secret-gate WRITE-TIME
 o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/proj/c.ts\",\"content\":\"const k='$LEAK'\"},\"session_id\":\"s\"}"); expect_deny "secret:write-aws-key" x "$o"; expect_teach "secret:write-aws-key" x "$o"
 o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/proj/c.ts\",\"content\":\"const k=process.env.API_KEY\"},\"session_id\":\"s\"}"); expect_allow "secret:write-env-ref" x "$o"
@@ -233,9 +214,14 @@ printf '# T\n- [ ] do it\n' > "$LIGDIR/TASKS.md"
 o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_allow "loop:edit-after-seed" x "$o"
 if command -v git >/dev/null 2>&1; then
   ( cd "$LIGDIR" && git init -q && git config user.email a@b.c && git config user.name a && git checkout -q -b task/x && git commit -q --allow-empty -m i )
+  pg() { echo "$1" | PHALANX_WARN= node "$TG/pipeline-gate.js"; }
   o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2\"}"); expect_deny "loop:commit-before-verify" x "$o"
-  li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2\"}" >/dev/null
-  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2\"}"); expect_allow "loop:commit-after-verify" x "$o"
+  # SINGLE WRITER: pipeline-gate records the cross-pass verify flag (repo+branch keyed
+  # under .claude-runs/), not loop-integrity. Verify under one session id...
+  pg "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2\"}" >/dev/null
+  [ -f "$LIGDIR/.claude-runs/verified.task_x" ] && echo "    PASS loop:verify-flag-written" || { echo "    FAIL loop:verify-flag-written"; FAIL=1; }
+  # ...then commit under a DIFFERENT session id (a fresh supervisor pass) still sees it.
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li3-freshpass\"}"); expect_allow "loop:commit-cross-pass-verify" x "$o"
 else echo "    SKIP loop:commit-* (git not installed)"; fi
 rm -rf "$LIGDIR"
 
@@ -271,11 +257,12 @@ rm -f "$CBDIR/PROGRESS.md"
 o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$NORMTP" "$CBDIR" | PHALANX_CTX_WINDOW=200000 node "$CBJ")
 case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:env-window-trips";; *) echo "    FAIL cb:env-window-trips got: $o"; FAIL=1;; esac
 
-# byte-size FALLBACK still works when a transcript has no usage line yet (pure bytes).
+# no usage line yet -> SILENT (no byte-estimate guess). Even a huge byte transcript
+# with a tiny window stays quiet until a real usage signal exists.
 PURETP="$CBDIR/pure.jsonl"; head -c 200000 /dev/zero | tr '\0' x > "$PURETP"
 rm -f "$CBDIR/PROGRESS.md"
 o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$PURETP" "$CBDIR" | PHALANX_CTX_WINDOW=100000 node "$CBJ")
-case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:byte-fallback";; *) echo "    FAIL cb:byte-fallback got: $o"; FAIL=1;; esac
+{ [ -z "$o" ] && [ ! -f "$CBDIR/PROGRESS.md" ]; } && echo "    PASS cb:no-usage-silent" || { echo "    FAIL cb:no-usage-silent got: $o"; FAIL=1; }
 rm -rf "$CBDIR"
 
 # item 4 work-respawn: supervisor active -> stop (empty, no block/continue).
@@ -306,27 +293,6 @@ printf '# T\n- [ ] add a blue button\n' > "$WADIR/TASKS.md"
 printf '# PROGRESS\n<!-- note: graphiti-only facts since 2026-05-28 will not be in memory_entries post-flip (data-continuity) -->\n' > "$WADIR/PROGRESS.md"
 o=$(printf '{"cwd":"%s"}' "$WADIR" | node "$WAJ"); case "$o" in *data-risk*) echo "    PASS autostart:risk-in-progress";; *) echo "    FAIL autostart:risk-in-progress got: $o"; FAIL=1;; esac
 rm -rf "$WADIR"
-
-# item 4 GC loop (opt-in, soft, never a gate): OFF -> no-op (writes nothing); ON (switch +
-# policy gc.enabled:true) -> writes a quality grade. Never touches a remote without --open-pr.
-GCOFF="$(mktemp -d)"; GCON="$(mktemp -d)"; GR1="$(mktemp -d)"; GR2="$(mktemp -d)"
-CLAUDE_DIR="$GCOFF" bash "$CLAUDE_DIR/gc-scan.sh" -r "$GR1" >/dev/null 2>&1
-[ -f "$GR1/quality-grades.json" ] && { echo "    FAIL gc:off-no-op (wrote grade)"; FAIL=1; } || echo "    PASS gc:off-no-op"
-touch "$GCON/.gc-on"; printf '{ "gc": { "enabled": true } }\n' > "$GCON/risk-policy.json"
-printf '# d\n[ok](real.md)\n' > "$GR2/real.md"
-CLAUDE_DIR="$GCON" bash "$CLAUDE_DIR/gc-scan.sh" -r "$GR2" >/dev/null 2>&1
-[ -f "$GR2/quality-grades.json" ] && echo "    PASS gc:on-writes-grade" || { echo "    FAIL gc:on-writes-grade"; FAIL=1; }
-rm -rf "$GCOFF" "$GCON" "$GR1" "$GR2"
-
-# item 5 first-class evidence (opt-in, soft, NEVER required for verify): OFF -> no-op;
-# ON but missing inputs (no URL / no playwright) -> graceful soft skip, exit 0, no dir.
-EVOFF="$(mktemp -d)"; EVON="$(mktemp -d)"; EVR="$(mktemp -d)"
-CLAUDE_DIR="$EVOFF" bash "$CLAUDE_DIR/evidence.sh" -u "http://x" -r "$EVR" >/dev/null 2>&1
-[ -d "$EVR/evidence" ] && { echo "    FAIL evidence:off-no-op"; FAIL=1; } || echo "    PASS evidence:off-no-op"
-touch "$EVON/.evidence-on"; printf '{ "evidence": { "enabled": true } }\n' > "$EVON/risk-policy.json"
-CLAUDE_DIR="$EVON" bash "$CLAUDE_DIR/evidence.sh" -r "$EVR" >/dev/null 2>&1; eec=$?
-{ [ "$eec" = 0 ] && [ ! -d "$EVR/evidence" ]; } && echo "    PASS evidence:on-no-url-soft" || { echo "    FAIL evidence:on-no-url-soft (ec=$eec)"; FAIL=1; }
-rm -rf "$EVOFF" "$EVON" "$EVR"
 
 # notify port: the per-job thread routing key reaches the adapter as a 4th arg and
 # defaults to the repo basename (so each job lands in its own Telegram topic/chat).

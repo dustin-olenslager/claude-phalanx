@@ -7,18 +7,22 @@
  *   (a) seed-before-edit    : block a CODE edit when the loop has nothing seeded
  *                             (cwd TASKS.md exists but has 0 open '- [ ]' items).
  *   (b) verify-before-commit: block `git commit` on a task/<slug> branch unless a
- *                             verify/test ran green this session.
+ *                             verify/test ran green this pass (cross-pass flag).
  * Active ONLY in loop-managed repos -- cwd has a TASKS.md. Silent everywhere else,
  * so ordinary repos are untouched. Respects the .work-off kill switch (don't fight
  * an explicit stop). Warn-only under PHALANX_WARN=1 (bot); hard-block otherwise.
  *
- * Verify state is SHARED with pipeline-gate via /tmp/phalanx-pipeline/<sid>, so a
- * test/typecheck/lint recognized by either gate satisfies both -- and we set the
- * flag here too, so verify-before-commit still works when the pipeline gate is off.
+ * Verify state is the CROSS-PASS flag (repo+branch keyed under .claude-runs/), which
+ * SURVIVES a fresh supervisor pass (new session id) -- the old /tmp/<sid> key did not,
+ * so pass N+1 lost the flag and wrongly hard-blocked the commit. SINGLE-WRITER:
+ * pipeline-gate.js WRITES the flag (on a verify skill/command); this gate only READS
+ * it (H.verifyFlagFresh). Both gates fire on the same Bash event and pipeline-gate is
+ * registered first, so a verify recorded earlier (or chained verify && commit) is
+ * visible here. A bare verify chained into the same commit command is also accepted
+ * inline below, so this gate never depends on hook ordering for the same-command case.
  */
 const fs = require("fs");
 const path = require("path");
-const cp = require("child_process");
 const H = require("./lib/phalanx-hook.js");
 const HERE = __dirname;
 
@@ -27,16 +31,6 @@ function allow() { process.exit(0); }
 const out = (decision, reason) => H.decide("PreToolUse", decision, reason);
 
 const WARN_ONLY = process.env.PHALANX_WARN === "1";
-
-// Item 3 (gates as teachers): remediation recipes from the policy contract
-// (<CLAUDE_DIR>/risk-policy.json); missing file/key -> inline fallback. Read-only:
-// never changes whether the gate fires, only the help text.
-let POLICY = {};
-try { POLICY = JSON.parse(fs.readFileSync(path.join(HERE, "risk-policy.json"), "utf8")); } catch {}
-const rx = (k, fallback) => {
-  const r = POLICY && POLICY.remediation && POLICY.remediation[k];
-  return (typeof r === "string" && r.trim()) ? r : fallback;
-};
 
 let input = {};
 try { input = JSON.parse(readStdin() || "{}"); } catch { allow(); }
@@ -56,23 +50,18 @@ if (H.killSwitched(cwd, HERE)) allow();
 
 const tool = input.tool_name || "";
 const ti = input.tool_input || {};
-const stateDir = H.stateDir("/tmp/phalanx-pipeline", input.session_id); // shared with pipeline-gate
-const { hasFlag, setFlag } = H.flagHelpers(stateDir);
-const verified = () => hasFlag("verified");
-const setVerified = () => setFlag("verified");
 
 const VERIFY_CMD = H.VERIFY_CMD;
 
 if (tool === "Bash") {
   const cmd = (ti.command || "") + "";
-  if (VERIFY_CMD.test(cmd)) setVerified();
   if (/\bgit\b[^\n]*\bcommit\b/.test(cmd)) {
-    let branch = "";
-    try {
-      branch = cp.execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-    } catch {}
-    if (/^task\//.test(branch) && !verified()) {
-      const msg = "Loop-integrity gate (item 5b): commit on " + branch + " blocked -- no verify/test ran green this session. " + rx("loop:verify", "Fix → run the build/test/lint/typecheck green this session before committing on a task/<slug> branch (independent of .pipeline-off).");
+    const branch = H.currentBranch(cwd);
+    // Cross-pass verify flag (written by pipeline-gate) OR a verify chained into this
+    // same command -- either satisfies the gate without depending on hook ordering.
+    const verified = H.verifyFlagFresh(cwd) || VERIFY_CMD.test(cmd);
+    if (/^task\//.test(branch) && !verified) {
+      const msg = "Loop-integrity gate (item 5b): commit on " + branch + " blocked -- no verify/test ran green this pass. Fix → run the build/test/lint/typecheck green before committing on a task/<slug> branch (independent of .pipeline-off).";
       return WARN_ONLY ? out("allow", "WARN " + msg) : out("deny", msg);
     }
   }
@@ -83,7 +72,7 @@ if (tool === "Edit" || tool === "Write" || tool === "MultiEdit" || tool === "Not
   const fp = (ti.file_path || ti.notebook_path || "") + "";
   const isCode = H.CODE.test(fp) && !H.metaRe(HERE).test(fp);
   if (isCode && open === 0) {
-    const msg = "Loop-integrity gate (item 5a): edit to " + fp + " blocked -- the loop has no seeded task (0 open items in TASKS.md). " + rx("loop:seed", "Fix → seed the request first: append '- [ ] (req:NEW) <request>' to TASKS.md at the repo root, then retry.");
+    const msg = "Loop-integrity gate (item 5a): edit to " + fp + " blocked -- the loop has no seeded task (0 open items in TASKS.md). Fix → seed the request first: append '- [ ] (req:NEW) <request>' to TASKS.md at the repo root, then retry.";
     return WARN_ONLY ? out("allow", "WARN " + msg) : out("deny", msg);
   }
   allow();

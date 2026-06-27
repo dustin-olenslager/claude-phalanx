@@ -22,8 +22,7 @@ echo "==> removing autonomous-loop artifacts"
 rm -f "$CLAUDE_DIR"/context-budget.js "$CLAUDE_DIR"/work-autostart.js "$CLAUDE_DIR"/work-intent.js "$CLAUDE_DIR"/work-respawn.js \
       "$CLAUDE_DIR"/run-work.sh "$CLAUDE_DIR"/run-work.ps1 "$CLAUDE_DIR"/TASKS.template.md \
       "$CLAUDE_DIR"/supervisord.sh "$CLAUDE_DIR"/phalanx-watch.sh "$CLAUDE_DIR"/notify.sh \
-      "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh \
-      "$CLAUDE_DIR"/gc-scan.sh "$CLAUDE_DIR"/evidence.sh
+      "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh
 rm -rf "$CLAUDE_DIR/agents" "$CLAUDE_DIR/commands"
 rm -rf "$CLAUDE_DIR/phalanx-templates"
 
