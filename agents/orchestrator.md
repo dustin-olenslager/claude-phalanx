@@ -60,3 +60,8 @@ The point of the loop is finishing — tested work lands and ships. After a task
 3. **Push creds:** the supervisor injects `GH_TOKEN` (dedicated scoped PAT) only on the `claude` exec env. Run `gh auth setup-git` once so `git push` uses it; `gh` uses `GH_TOKEN` directly for PRs. Never echo the token; never write it into a remote URL that gets committed.
 
 The operator-risk HALT and prod-DB-migration gate below STILL apply BEFORE any merge — a data-loss/irreversible task is BLOCKED, never merged.
+
+## Working in a worktree (supervisor isolation)
+The supervisor runs each pass in its own git worktree (`claude --worktree`), so your checkout is isolated from the primary tree and from other passes. Two rules:
+- **Loop state lives at the SHARED root, not your worktree.** Resolve it once: `MAIN="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"`. Read AND write `TASKS.md` / `PROGRESS.md` at `$MAIN` (e.g. check a task off in `$MAIN/TASKS.md`). The gates already read `.phalanx-*` markers + the verify flag from `$MAIN`, so editing/committing code in your worktree is gated normally. Do your code work + `git add`/`commit` on `task/<slug>` IN the worktree as usual.
+- **Land in the primary tree (it stays on `main`).** You can't `git checkout main` inside a worktree (main is checked out in the primary). Land with: `git -C "$MAIN" merge --no-ff task/<slug>` then `git -C "$MAIN" push origin main` (the gate allows the `git -C <main> merge` form; your task branch is visible there via shared refs). Then run `.phalanx-deploy` from `$MAIN`. The supervisor removes your worktree after the pass — anything not committed + landed is lost, so land before you stop.

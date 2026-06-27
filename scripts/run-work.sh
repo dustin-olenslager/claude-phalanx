@@ -26,6 +26,10 @@ done
 REPO="$(cd "$REPO" 2>/dev/null && pwd)" || { echo "bad repo path" >&2; exit 1; }
 cd "$REPO"
 
+# Keep per-pass worktree checkouts out of the primary tree's git status (local exclude,
+# never committed). Worktrees live under .claude/worktrees/ (the claude --worktree default).
+grep -qxF '.claude/worktrees/' "$REPO/.git/info/exclude" 2>/dev/null || echo '.claude/worktrees/' >> "$REPO/.git/info/exclude" 2>/dev/null || true
+
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 
 # A detached/cron launch can hand run-work a PATH that has the standard bins but
@@ -173,6 +177,14 @@ while true; do
   stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo 0)"; log="$RUNDIR/pass-$pass-$stamp.log"
   echo "=== Pass $pass - $(date +%T 2>/dev/null) - fresh /work ==="
   note progress "pass $pass starting"
+  # Worktree isolation: run the pass in its OWN checkout so concurrent passes / other
+  # instances never collide on the primary tree's branch or index. Loop STATE
+  # (TASKS.md/PROGRESS.md/.claude-runs) stays at the primary (shared) root -- the gates
+  # and orchestrator resolve it via --git-common-dir, so the worktree pass drains the
+  # SAME backlog. Non-interactive `--worktree` is NOT auto-removed, so we remove it after
+  # the pass. Opt out (or an older `claude` without --worktree) with PHALANX_NO_WORKTREE=1.
+  WT_NAME=""; WT_FLAGS=""
+  if [ -z "${PHALANX_NO_WORKTREE:-}" ]; then WT_NAME="wt-$pass-$stamp"; WT_FLAGS="--worktree $WT_NAME"; fi
   # Wall-clock cap per pass (item 4): a hung `claude -p` must not block the
   # detached loop forever. `timeout` returns 124 on expiry -- treated as a
   # RECOVERABLE failure below (count it, notify, relaunch fresh), not a hard stop.
@@ -180,13 +192,21 @@ while true; do
   if command -v timeout >/dev/null 2>&1; then
     PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
       CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" GH_TOKEN="$GH_TOKEN_VAL" \
-      timeout "${PHALANX_PASS_TIMEOUT:-1800}s" claude -p "/work" 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
+      timeout "${PHALANX_PASS_TIMEOUT:-1800}s" claude -p "/work" $WT_FLAGS 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
   else
     PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
       CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" GH_TOKEN="$GH_TOKEN_VAL" \
-      claude -p "/work" 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
+      claude -p "/work" $WT_FLAGS 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
   fi
   set -e
+
+  # Remove the pass's worktree (non-interactive --worktree is not auto-cleaned). The work
+  # is already committed on its branch + landed to main by the orchestrator; --force drops
+  # the throwaway checkout. State files live at the primary root, so nothing is lost.
+  if [ -n "$WT_NAME" ]; then
+    git -C "$REPO" worktree remove --force "$REPO/.claude/worktrees/$WT_NAME" >/dev/null 2>&1 || true
+    git -C "$REPO" worktree prune >/dev/null 2>&1 || true
+  fi
 
   if [ "$code" -eq 124 ]; then
     fails=$((fails + 1))

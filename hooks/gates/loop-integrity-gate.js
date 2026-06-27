@@ -42,13 +42,12 @@ try { input = JSON.parse(readStdin() || "{}"); } catch { allow(); }
 
 const cwd = input.cwd || process.cwd();
 
-// Loop-managed only: a repo with a TASKS.md. Otherwise inert.
-let open = 0;
-try {
-  const t = fs.readFileSync(path.join(cwd, "TASKS.md"), "utf8");
-  const m = t.match(/^\s*-\s*\[\s*\]/gm);
-  open = m ? m.length : 0;
-} catch { allow(); }
+// Loop-managed only: a repo with a TASKS.md. Read at the SHARED repo root (via
+// readRepoFile→repoRoot) so a session running inside a worktree counts the SAME backlog
+// as the primary checkout. No TASKS.md anywhere -> inert.
+const tasksTxt = H.readRepoFile(cwd, "TASKS.md");
+if (!tasksTxt) allow();
+const open = H.openCount(tasksTxt);
 
 // Honor the kill switches -- an explicit stop means don't gate.
 if (H.killSwitched(cwd, HERE)) allow();
@@ -69,7 +68,11 @@ if (tool === "Bash") {
   // verify for the MERGED branch (checked by source-branch name, since the merge runs FROM
   // main). NEVER merge on red.
   if (H.GIT_MERGE.test(cmd)) {
-    const br = H.currentBranch(cwd);
+    // The merge may run in cwd OR in a `-C <primary>` target (the worktree-land form,
+    // where the primary stays on main). Resolve the TARGET tree + its branch so a land
+    // from a worktree (cwd is on the task branch) is still caught as into-main.
+    const tgt = H.mergeCwdPath(cmd) || cwd;
+    const br = H.currentBranch(tgt);
     const intoMain = br === "main" || br === "master" || H.CHECKOUT_MAIN.test(cmd);
     if (intoMain) {
       const root = H.repoRoot(cwd);
