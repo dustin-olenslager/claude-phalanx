@@ -39,10 +39,12 @@ cp "$HERE"/scripts/run-work.sh "$HERE"/scripts/run-work.ps1 "$CLAUDE_DIR/" 2>/de
 # v1.4 no-babysit: supervisor process-manager, auto-start watcher, notify sink,
 # request-scoped seed/unseed, and the Telegram bot hand-off entrypoint.
 cp "$HERE"/scripts/supervisord.sh "$HERE"/scripts/phalanx-watch.sh "$HERE"/scripts/notify.sh \
-   "$HERE"/scripts/seed-task.sh "$HERE"/scripts/unseed-task.sh "$HERE"/scripts/bot-handoff.sh "$CLAUDE_DIR/" 2>/dev/null || true
+   "$HERE"/scripts/seed-task.sh "$HERE"/scripts/unseed-task.sh "$HERE"/scripts/bot-handoff.sh \
+   "$HERE"/scripts/gc-scan.sh "$CLAUDE_DIR/" 2>/dev/null || true
 cp "$HERE"/TASKS.template.md "$CLAUDE_DIR/" 2>/dev/null || true
 chmod +x "$CLAUDE_DIR"/run-work.sh "$CLAUDE_DIR"/supervisord.sh "$CLAUDE_DIR"/phalanx-watch.sh \
-         "$CLAUDE_DIR"/notify.sh "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh 2>/dev/null || true
+         "$CLAUDE_DIR"/notify.sh "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh \
+         "$CLAUDE_DIR"/gc-scan.sh 2>/dev/null || true
 
 echo "==> templates (state + dependency-cruiser + policy)"
 cp "$HERE"/state/*.json "$CLAUDE_DIR/phalanx-templates/state/"
@@ -86,7 +88,7 @@ echo "==> validate (node --check + JSON parse)"
 for g in pipeline-gate effect-ca-gate secret-gate loop-integrity-gate context-budget work-autostart work-intent work-respawn; do
   node --check "$CLAUDE_DIR/$g.js" && echo "    node --check $g.js ok"
 done
-for s in run-work supervisord phalanx-watch notify seed-task unseed-task bot-handoff; do
+for s in run-work supervisord phalanx-watch notify seed-task unseed-task bot-handoff gc-scan; do
   bash -n "$CLAUDE_DIR/$s.sh" && echo "    bash -n $s.sh ok"
 done
 for h in caveman-anchor app-pipeline-anchor ts-arch-anchor phase-anchor phalanx-selfupdate; do
@@ -251,6 +253,17 @@ printf '# T\n- [ ] add a blue button\n' > "$WADIR/TASKS.md"
 printf '# PROGRESS\n<!-- note: graphiti-only facts since 2026-05-28 will not be in memory_entries post-flip (data-continuity) -->\n' > "$WADIR/PROGRESS.md"
 o=$(printf '{"cwd":"%s"}' "$WADIR" | node "$WAJ"); case "$o" in *data-risk*) echo "    PASS autostart:risk-in-progress";; *) echo "    FAIL autostart:risk-in-progress got: $o"; FAIL=1;; esac
 rm -rf "$WADIR"
+
+# item 4 GC loop (opt-in, soft, never a gate): OFF -> no-op (writes nothing); ON (switch +
+# policy gc.enabled:true) -> writes a quality grade. Never touches a remote without --open-pr.
+GCOFF="$(mktemp -d)"; GCON="$(mktemp -d)"; GR1="$(mktemp -d)"; GR2="$(mktemp -d)"
+CLAUDE_DIR="$GCOFF" bash "$CLAUDE_DIR/gc-scan.sh" -r "$GR1" >/dev/null 2>&1
+[ -f "$GR1/quality-grades.json" ] && { echo "    FAIL gc:off-no-op (wrote grade)"; FAIL=1; } || echo "    PASS gc:off-no-op"
+touch "$GCON/.gc-on"; printf '{ "gc": { "enabled": true } }\n' > "$GCON/risk-policy.json"
+printf '# d\n[ok](real.md)\n' > "$GR2/real.md"
+CLAUDE_DIR="$GCON" bash "$CLAUDE_DIR/gc-scan.sh" -r "$GR2" >/dev/null 2>&1
+[ -f "$GR2/quality-grades.json" ] && echo "    PASS gc:on-writes-grade" || { echo "    FAIL gc:on-writes-grade"; FAIL=1; }
+rm -rf "$GCOFF" "$GCON" "$GR1" "$GR2"
 
 # items 1+6 supervisor loop drains a backlog across fresh passes (stub claude),
 # and request-scoped unseed removes a left-open TASKS.md.
