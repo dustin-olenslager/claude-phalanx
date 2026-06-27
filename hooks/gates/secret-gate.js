@@ -6,8 +6,11 @@
  *     block a hard-coded credential before it's even written.
  *  2. COMMIT-TIME (Bash `git commit`): scan the STAGED diff with gitleaks (then
  *     trufflehog) if installed, else a regex fallback; deny with file:line.
- * Hard-block by default; PHALANX_WARN=1 for warn-only.
- * Off switch: <CLAUDE_DIR>/.secret-scan-off. __dirname === CLAUDE_DIR.
+ * SECURITY gate: ALWAYS hard-blocks. Unlike the discipline gates (pipeline,
+ * loop-integrity) this does NOT honor PHALANX_WARN -- a leaked credential is not
+ * a warn-able lint. The only off switch is <CLAUDE_DIR>/.secret-scan-off, which
+ * lives OUTSIDE the agent-writable repo tree (__dirname === CLAUDE_DIR), so the
+ * agent cannot `touch` its own bypass inside the repo it is editing.
  */
 const fs = require('fs');
 const path = require('path');
@@ -23,9 +26,11 @@ function out(decision, reason) {
   process.exit(0);
 }
 
+// Off switch MUST live under CLAUDE_DIR (HERE), never the agent-writable repo.
 const OFF = path.join(HERE, '.secret-scan-off');
-const WARN_ONLY = process.env.PHALANX_WARN === '1';
-const block = (msg) => (WARN_ONLY ? out('allow', '⚠ ' + msg) : out('deny', msg));
+// SECURITY gate: always deny on a hit. PHALANX_WARN downgrades discipline gates,
+// NOT this one -- a hard-coded credential is non-bypassable by env.
+const block = (msg) => out('deny', msg);
 
 // Item 3 (gates as teachers): remediation recipes from the policy contract
 // (<CLAUDE_DIR>/risk-policy.json); missing file/key -> inline fallback. Read-only:
