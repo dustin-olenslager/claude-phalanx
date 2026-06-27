@@ -44,9 +44,20 @@ cp "$HERE"/TASKS.template.md "$CLAUDE_DIR/" 2>/dev/null || true
 chmod +x "$CLAUDE_DIR"/run-work.sh "$CLAUDE_DIR"/supervisord.sh "$CLAUDE_DIR"/phalanx-watch.sh \
          "$CLAUDE_DIR"/notify.sh "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh 2>/dev/null || true
 
-echo "==> templates (state + dependency-cruiser)"
+echo "==> templates (state + dependency-cruiser + policy)"
 cp "$HERE"/state/*.json "$CLAUDE_DIR/phalanx-templates/state/"
 cp "$HERE"/configs/.dependency-cruiser.js "$CLAUDE_DIR/phalanx-templates/"
+cp "$HERE"/policy/risk-policy.json "$CLAUDE_DIR/phalanx-templates/" 2>/dev/null || true
+
+# Policy contract (Items 2-5 unifying primitive). Create-if-absent so a release
+# pull never clobbers operator opt-ins; the refreshed template lives alongside.
+echo "==> policy contract (create-if-absent)"
+if [ ! -f "$CLAUDE_DIR/risk-policy.json" ]; then
+  cp "$HERE/policy/risk-policy.json" "$CLAUDE_DIR/risk-policy.json"
+  echo "    created $CLAUDE_DIR/risk-policy.json"
+else
+  echo "    kept existing $CLAUDE_DIR/risk-policy.json"
+fi
 
 echo "==> memory dir"
 MEMORY_DIR="${MEMORY_DIR:-$CLAUDE_DIR/memory}"
@@ -83,6 +94,7 @@ for h in caveman-anchor app-pipeline-anchor ts-arch-anchor phase-anchor phalanx-
 done
 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$SETTINGS"
 echo "    ok"
+node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$CLAUDE_DIR/risk-policy.json" && echo "    risk-policy.json parses ok"
 
 # ---- verify simulations -----------------------------------------------------
 echo "==> verify simulations"
@@ -101,6 +113,8 @@ done
 fire() { echo "$2" | PHALANX_WARN= node "$TG/$1"; }
 expect_deny() { case "$3" in *'"permissionDecision":"deny"'*) echo "    PASS $1";; *) echo "    FAIL $1 (expected deny) got: $3"; FAIL=1;; esac; }
 expect_allow() { if [ -z "$3" ]; then echo "    PASS $1"; else echo "    FAIL $1 (expected allow/empty) got: $3"; FAIL=1; fi; }
+# Item 3 (gates as teachers): a blocked reason must also carry a concrete "Fix →" recipe.
+expect_teach() { case "$3" in *"Fix →"*) echo "    PASS $1 (teaches)";; *) echo "    FAIL $1 (no remediation recipe) got: $3"; FAIL=1;; esac; }
 
 # anchors emit valid JSON
 for a in caveman-anchor app-pipeline-anchor ts-arch-anchor phase-anchor; do
@@ -119,7 +133,7 @@ for st in none build maintain optimize; do
 done
 
 # effect-ca-gate
-o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/x.ts\"},\"session_id\":\"$SID\"}"); expect_deny "tsarch:ts-no-flags" x "$o"
+o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/x.ts\"},\"session_id\":\"$SID\"}"); expect_deny "tsarch:ts-no-flags" x "$o"; expect_teach "tsarch:ts-no-flags" x "$o"
 fire effect-ca-gate.js "{\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"clean-architecture\"},\"session_id\":\"$SID\"}" >/dev/null
 fire effect-ca-gate.js "{\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"effect-ts\"},\"session_id\":\"$SID\"}" >/dev/null
 o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/x.ts\"},\"session_id\":\"$SID\"}"); expect_allow "tsarch:ts-after-skills" x "$o"
@@ -127,10 +141,10 @@ o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\
 o=$(fire effect-ca-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$CLAUDE_DIR/skills/x/SKILL.md\"},\"session_id\":\"sx\"}"); expect_allow "tsarch:claudedir-exempt" x "$o"
 
 # pipeline-gate
-o=$(fire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/y.go\"},\"session_id\":\"$SID\"}"); expect_deny "pipeline:code-no-plan" x "$o"
+o=$(fire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/y.go\"},\"session_id\":\"$SID\"}"); expect_deny "pipeline:code-no-plan" x "$o"; expect_teach "pipeline:code-no-plan" x "$o"
 fire pipeline-gate.js "{\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"phased-plan\"},\"session_id\":\"$SID\"}" >/dev/null
 o=$(fire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/y.go\"},\"session_id\":\"$SID\"}"); expect_allow "pipeline:code-after-plan" x "$o"
-o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"session_id\":\"phalanx-selftest3\"}"); expect_deny "pipeline:commit-no-verify" x "$o"
+o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"session_id\":\"phalanx-selftest3\"}"); expect_deny "pipeline:commit-no-verify" x "$o"; expect_teach "pipeline:commit-no-verify" x "$o"
 fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"pnpm test\"},\"session_id\":\"phalanx-selftest3\"}" >/dev/null
 o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"session_id\":\"phalanx-selftest3\"}"); expect_allow "pipeline:commit-after-verify" x "$o"
 fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"tsc --noEmit\"},\"session_id\":\"phalanx-tsc\"}" >/dev/null
@@ -139,7 +153,7 @@ fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ruf
 o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"session_id\":\"phalanx-lint\"}"); expect_allow "pipeline:commit-after-lint" x "$o"
 
 # secret-gate WRITE-TIME
-o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/proj/c.ts\",\"content\":\"const k='$LEAK'\"},\"session_id\":\"s\"}"); expect_deny "secret:write-aws-key" x "$o"
+o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/proj/c.ts\",\"content\":\"const k='$LEAK'\"},\"session_id\":\"s\"}"); expect_deny "secret:write-aws-key" x "$o"; expect_teach "secret:write-aws-key" x "$o"
 o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/proj/c.ts\",\"content\":\"const k=process.env.API_KEY\"},\"session_id\":\"s\"}"); expect_allow "secret:write-env-ref" x "$o"
 
 # work-intent (UserPromptSubmit): speaks on code-intent, silent on read-only + under .work-off
@@ -176,7 +190,7 @@ LIGG="$TG/loop-integrity-gate.js"
 LIGDIR="$HOME/.phalanx-lig-selftest"; rm -rf "$LIGDIR"; mkdir -p "$LIGDIR"
 li() { echo "$1" | PHALANX_WARN= node "$LIGG"; }
 printf '# T\n- [x] done\n' > "$LIGDIR/TASKS.md"
-o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_deny "loop:seed-before-edit" x "$o"
+o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_deny "loop:seed-before-edit" x "$o"; expect_teach "loop:seed-before-edit" x "$o"
 printf '# T\n- [ ] do it\n' > "$LIGDIR/TASKS.md"
 o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_allow "loop:edit-after-seed" x "$o"
 if command -v git >/dev/null 2>&1; then

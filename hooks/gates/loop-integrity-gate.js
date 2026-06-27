@@ -32,6 +32,16 @@ function out(decision, reason) {
 
 const WARN_ONLY = process.env.PHALANX_WARN === "1";
 
+// Item 3 (gates as teachers): remediation recipes from the policy contract
+// (<CLAUDE_DIR>/risk-policy.json); missing file/key -> inline fallback. Read-only:
+// never changes whether the gate fires, only the help text.
+let POLICY = {};
+try { POLICY = JSON.parse(fs.readFileSync(path.join(HERE, "risk-policy.json"), "utf8")); } catch {}
+const rx = (k, fallback) => {
+  const r = POLICY && POLICY.remediation && POLICY.remediation[k];
+  return (typeof r === "string" && r.trim()) ? r : fallback;
+};
+
 let input = {};
 try { input = JSON.parse(readStdin() || "{}"); } catch { allow(); }
 
@@ -67,7 +77,7 @@ if (tool === "Bash") {
       branch = cp.execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
     } catch {}
     if (/^task\//.test(branch) && !verified()) {
-      const msg = "Loop-integrity gate (item 5b): commit on " + branch + " blocked -- no verify/test ran green this session. Run the build/test/lint/typecheck first (independent of .pipeline-off).";
+      const msg = "Loop-integrity gate (item 5b): commit on " + branch + " blocked -- no verify/test ran green this session. " + rx("loop:verify", "Fix → run the build/test/lint/typecheck green this session before committing on a task/<slug> branch (independent of .pipeline-off).");
       return WARN_ONLY ? out("allow", "WARN " + msg) : out("deny", msg);
     }
   }
@@ -81,7 +91,7 @@ if (tool === "Edit" || tool === "Write" || tool === "MultiEdit" || tool === "Not
   const META = new RegExp("(^" + esc + "|/\\.claude/|^/tmp/|/node_modules/|/\\.git/|/dist/|/build/)");
   const isCode = CODE.test(fp) && !META.test(fp);
   if (isCode && open === 0) {
-    const msg = "Loop-integrity gate (item 5a): edit to " + fp + " blocked -- the loop has no seeded task (0 open items in TASKS.md). Seed the request first: append '- [ ] (req:NEW) <request>' to TASKS.md at the repo root.";
+    const msg = "Loop-integrity gate (item 5a): edit to " + fp + " blocked -- the loop has no seeded task (0 open items in TASKS.md). " + rx("loop:seed", "Fix → seed the request first: append '- [ ] (req:NEW) <request>' to TASKS.md at the repo root, then retry.");
     return WARN_ONLY ? out("allow", "WARN " + msg) : out("deny", msg);
   }
   allow();

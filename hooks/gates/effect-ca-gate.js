@@ -25,6 +25,16 @@ function out(decision, reason) {
 const OFF = path.join(HERE, '.ts-arch-off');
 const WARN_ONLY = process.env.PHALANX_WARN === '1';
 
+// Item 3 (gates as teachers): remediation recipes from the policy contract
+// (<CLAUDE_DIR>/risk-policy.json); missing file/key -> inline fallback. Read-only:
+// never changes whether the gate fires, only the help text.
+let POLICY = {};
+try { POLICY = JSON.parse(fs.readFileSync(path.join(HERE, 'risk-policy.json'), 'utf8')); } catch {}
+const rx = (k, fallback) => {
+  const r = POLICY && POLICY.remediation && POLICY.remediation[k];
+  return (typeof r === 'string' && r.trim()) ? r : fallback;
+};
+
 let input = {};
 try { input = JSON.parse(readStdin() || '{}'); } catch { allow(); }
 if (fs.existsSync(OFF)) allow();
@@ -53,8 +63,8 @@ if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'Not
   if (!(CODE.test(fp) && !META.test(fp))) allow();
 
   const missing = [];
-  if (!hasFlag('ca')) missing.push('clean-architecture (deps inward, business rules free of IO/frameworks, ports+adapters, DTO boundaries, one composition root; enforce mechanically at verify via arch-enforce)');
-  if (TS.test(fp) && !hasFlag('effect')) missing.push('effect-ts (Effect<A,E,R>, tryPromise over await, Data.TaggedError, Effect.Service/Layer DI, Schema at boundaries, runPromise/runFork at one entrypoint)');
+  if (!hasFlag('ca')) missing.push(rx('effect-ca:ca', 'clean-architecture — Fix → consult the skill, then retry: deps inward, business rules free of IO/frameworks, ports+adapters, DTO boundaries, one composition root; enforce at verify via arch-enforce.'));
+  if (TS.test(fp) && !hasFlag('effect')) missing.push(rx('effect-ca:effect', 'effect-ts — Fix → consult the skill, then retry: Effect<A,E,R>, tryPromise over await, Data.TaggedError, Effect.Service/Layer DI, Schema at boundaries, runPromise/runFork at one entrypoint.'));
 
   if (missing.length) {
     const msg = 'TS/arch gate (§14): code edit blocked — consult skill(s) first: ' + missing.join('; ') + '. Override: touch ' + OFF + ' ("stop effect" / "stop clean-arch").';
