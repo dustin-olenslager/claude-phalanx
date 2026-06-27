@@ -29,6 +29,11 @@ sup_alive() {
   return 0
 }
 off()           { [ -f "$1/.work-off" ] || [ -f "$CLAUDE_DIR/.work-off" ]; }
+# UNATTENDED auto-run is OPT-IN per repo (.phalanx-autorun), default OFF. Being in the
+# registry means "known to the loop", NOT "drive me unattended" -- separating those is
+# the fix for the 2026-06-27 fleet runaway, where enabling merge authority on registry
+# repos with open backlogs made the watcher auto-drive them all straight to prod.
+autorun()       { [ -f "$1/.phalanx-autorun" ]; }
 # A repo HALTED for a human (the BLOCKED sentinel was materialized, or PROGRESS.md
 # carries a BLOCKED line the supervisor would trip on) must NOT be relaunched --
 # otherwise the watcher churns it every pass (start -> block-after-0-passes -> stop)
@@ -50,6 +55,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   [ -z "$repo" ] && continue
   [ -d "$repo" ] || { echo "skip (missing dir): $repo"; continue; }
   if off "$repo";      then echo "skip (.work-off): $repo"; continue; fi
+  if ! autorun "$repo"; then echo "skip (no .phalanx-autorun opt-in): $repo"; continue; fi
   if blocked "$repo";  then echo "skip (BLOCKED, awaiting human): $repo"; continue; fi
   if ! has_open "$repo"; then continue; fi
   if sup_alive "$repo"; then echo "skip (already supervised): $repo"; continue; fi

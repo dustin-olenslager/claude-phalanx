@@ -239,6 +239,14 @@ if command -v git >/dev/null 2>&1; then
   o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout main && git merge --no-ff task/unverified\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"mg3\"}"); expect_deny "merge:deny-no-green" x "$o"
   # (4) NON-BYPASSABLE: even under PHALANX_WARN=1 a red merge still DENIES (unlike 5a/5b).
   o=$(echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout main && git merge --no-ff task/unverified\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"mg4\"}" | PHALANX_WARN=1 node "$LIGG"); expect_deny "merge:nonbypassable-warn" x "$o"
+  # (5d) a migration-bearing branch must NOT auto-merge even when opted in + green.
+  # add ONLY the migration file (git add -A would stage the untracked TASKS.md/markers
+  # onto task/mig, and `checkout task/x` would then delete them -> gate goes inert).
+  ( cd "$LIGDIR" && git branch -f main task/x && git checkout -q -b task/mig main && mkdir -p drizzle && echo "ALTER TABLE x ADD COLUMN y int;" > drizzle/0099_x.sql && git add drizzle/0099_x.sql && git commit -q -m mig && git checkout -q task/x )
+  mkdir -p "$LIGDIR/.claude-runs"; : > "$LIGDIR/.claude-runs/verified.task_mig"
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout main && git merge --no-ff task/mig\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"mg5b\"}"); expect_deny "merge:deny-migration" x "$o"
+  # GIT_MERGE false-positive guard: a branch NAME containing "merge" must NOT trip 5c.
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout -b task/merge-ui\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"mg5c\"}"); expect_allow "merge:branchname-no-falsetrip" x "$o"
   # (5) a branch-LOCAL merge (target is NOT main) is untouched even without opt-in.
   rm -f "$LIGDIR/.phalanx-automerge"
   o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git merge --no-ff feature/side\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"mg5\"}"); expect_allow "merge:branch-local-untouched" x "$o"
@@ -351,6 +359,18 @@ STUB
   [ -f "$RS/TASKS.md" ] && { echo "    FAIL reqscoped:unseed-removes-empty"; FAIL=1; } || echo "    PASS reqscoped:unseed-removes-empty"
   rm -rf "$SDIR"
 else echo "    SKIP supervisor:* (sed not installed)"; fi
+
+# phalanx-watch autorun gate: a registry repo WITHOUT .phalanx-autorun is SKIPPED and
+# never launched (the 2026-06-27 fleet-runaway fix -- registry != unattended auto-run).
+# Safe: the skip happens before any supervisor launch, so nothing is spawned here.
+WDIR="$(mktemp -d)"; mkdir -p "$WDIR/repo/.claude-runs"; printf -- '- [ ] x\n' > "$WDIR/repo/TASKS.md"
+printf '%s\n' "$WDIR/repo" > "$WDIR/registry"
+o=$(CLAUDE_DIR="$WDIR/cd" bash "$CLAUDE_DIR/phalanx-watch.sh" -f "$WDIR/registry" 2>&1)
+case "$o" in
+  *"skip (no .phalanx-autorun"*) case "$o" in *"starting supervisor"*) echo "    FAIL watch:autorun-gate (launched a non-opted repo)"; FAIL=1;; *) echo "    PASS watch:autorun-gate";; esac;;
+  *) echo "    FAIL watch:autorun-gate got: $o"; FAIL=1;;
+esac
+rm -rf "$WDIR"
 
 rm -rf "/tmp/phalanx-pipeline" "/tmp/phalanx-tsarch" "$TG" 2>/dev/null || true
 if [ "$FAIL" -ne 0 ]; then echo "==> SELF-TEST FAILED"; exit 1; fi
