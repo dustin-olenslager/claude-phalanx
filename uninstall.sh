@@ -28,9 +28,23 @@ rm -rf "$CLAUDE_DIR/phalanx-templates"
 
 echo "==> leak guard teardown (private denylist .phalanx-leakwords is LEFT in place)"
 if [ "$(git config --global --get core.hooksPath 2>/dev/null)" = "$CLAUDE_DIR/githooks" ]; then
-  git config --global --unset core.hooksPath 2>/dev/null || true
-  echo "    unset core.hooksPath"
+  # If install took over a pre-existing foreign hooksPath (PHALANX_FORCE_GUARDS),
+  # restore it; otherwise just unset what we set.
+  if [ -f "$CLAUDE_DIR/.prev-hookspath" ]; then
+    prev="$(cat "$CLAUDE_DIR/.prev-hookspath" 2>/dev/null || true)"
+    if [ -n "$prev" ]; then
+      git config --global core.hooksPath "$prev" 2>/dev/null || true
+      echo "    restored core.hooksPath -> $prev"
+    else
+      git config --global --unset core.hooksPath 2>/dev/null || true
+      echo "    unset core.hooksPath"
+    fi
+  else
+    git config --global --unset core.hooksPath 2>/dev/null || true
+    echo "    unset core.hooksPath"
+  fi
 fi
+rm -f "$CLAUDE_DIR/.prev-hookspath"
 rm -rf "$CLAUDE_DIR/githooks"
 rm -f "$CLAUDE_DIR/.phalanx-update.stamp" "$CLAUDE_DIR/.phalanx-update.lock" "$CLAUDE_DIR/.phalanx-checkout"
 

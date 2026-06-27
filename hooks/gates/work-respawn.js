@@ -87,13 +87,9 @@ function strikeRespawn() {
   } catch {}
 }
 
-let respawn = false;
-try {
-  const p = fs.readFileSync(path.join(cwd, "PROGRESS.md"), "utf8");
-  const tail = p.slice(-600);
-  // Active only if the most recent RESPAWN is NOT already followed by a DONE strike.
-  respawn = /RESPAWN/.test(tail) && p.lastIndexOf("RESPAWN-DONE") < p.lastIndexOf("RESPAWN");
-} catch {}
+// Active only if the most recent RESPAWN is NOT already struck by a later DONE
+// (shared reader; same standard window).
+const respawn = H.respawnActive(H.readRepoFile(cwd, "PROGRESS.md"));
 
 if (respawn) {
   // Auto-escalate: launch a detached supervisor to carry the loop to done with no
