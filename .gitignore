@@ -12,3 +12,6 @@ PROGRESS.md
 .claude-runs/
 .work-off
 .phalanx-repos
+
+# per-pass worktrees (Phalanx loop)
+.claude/worktrees/
