@@ -40,11 +40,11 @@ cp "$HERE"/scripts/run-work.sh "$HERE"/scripts/run-work.ps1 "$CLAUDE_DIR/" 2>/de
 # request-scoped seed/unseed, and the Telegram bot hand-off entrypoint.
 cp "$HERE"/scripts/supervisord.sh "$HERE"/scripts/phalanx-watch.sh "$HERE"/scripts/notify.sh \
    "$HERE"/scripts/seed-task.sh "$HERE"/scripts/unseed-task.sh "$HERE"/scripts/bot-handoff.sh \
-   "$HERE"/scripts/gc-scan.sh "$CLAUDE_DIR/" 2>/dev/null || true
+   "$HERE"/scripts/gc-scan.sh "$HERE"/scripts/evidence.sh "$CLAUDE_DIR/" 2>/dev/null || true
 cp "$HERE"/TASKS.template.md "$CLAUDE_DIR/" 2>/dev/null || true
 chmod +x "$CLAUDE_DIR"/run-work.sh "$CLAUDE_DIR"/supervisord.sh "$CLAUDE_DIR"/phalanx-watch.sh \
          "$CLAUDE_DIR"/notify.sh "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh \
-         "$CLAUDE_DIR"/gc-scan.sh 2>/dev/null || true
+         "$CLAUDE_DIR"/gc-scan.sh "$CLAUDE_DIR"/evidence.sh 2>/dev/null || true
 
 echo "==> templates (state + dependency-cruiser + policy)"
 cp "$HERE"/state/*.json "$CLAUDE_DIR/phalanx-templates/state/"
@@ -88,7 +88,7 @@ echo "==> validate (node --check + JSON parse)"
 for g in pipeline-gate effect-ca-gate secret-gate loop-integrity-gate context-budget work-autostart work-intent work-respawn; do
   node --check "$CLAUDE_DIR/$g.js" && echo "    node --check $g.js ok"
 done
-for s in run-work supervisord phalanx-watch notify seed-task unseed-task bot-handoff gc-scan; do
+for s in run-work supervisord phalanx-watch notify seed-task unseed-task bot-handoff gc-scan evidence; do
   bash -n "$CLAUDE_DIR/$s.sh" && echo "    bash -n $s.sh ok"
 done
 for h in caveman-anchor app-pipeline-anchor ts-arch-anchor phase-anchor phalanx-selfupdate; do
@@ -264,6 +264,16 @@ printf '# d\n[ok](real.md)\n' > "$GR2/real.md"
 CLAUDE_DIR="$GCON" bash "$CLAUDE_DIR/gc-scan.sh" -r "$GR2" >/dev/null 2>&1
 [ -f "$GR2/quality-grades.json" ] && echo "    PASS gc:on-writes-grade" || { echo "    FAIL gc:on-writes-grade"; FAIL=1; }
 rm -rf "$GCOFF" "$GCON" "$GR1" "$GR2"
+
+# item 5 first-class evidence (opt-in, soft, NEVER required for verify): OFF -> no-op;
+# ON but missing inputs (no URL / no playwright) -> graceful soft skip, exit 0, no dir.
+EVOFF="$(mktemp -d)"; EVON="$(mktemp -d)"; EVR="$(mktemp -d)"
+CLAUDE_DIR="$EVOFF" bash "$CLAUDE_DIR/evidence.sh" -u "http://x" -r "$EVR" >/dev/null 2>&1
+[ -d "$EVR/evidence" ] && { echo "    FAIL evidence:off-no-op"; FAIL=1; } || echo "    PASS evidence:off-no-op"
+touch "$EVON/.evidence-on"; printf '{ "evidence": { "enabled": true } }\n' > "$EVON/risk-policy.json"
+CLAUDE_DIR="$EVON" bash "$CLAUDE_DIR/evidence.sh" -r "$EVR" >/dev/null 2>&1; eec=$?
+{ [ "$eec" = 0 ] && [ ! -d "$EVR/evidence" ]; } && echo "    PASS evidence:on-no-url-soft" || { echo "    FAIL evidence:on-no-url-soft (ec=$eec)"; FAIL=1; }
+rm -rf "$EVOFF" "$EVON" "$EVR"
 
 # items 1+6 supervisor loop drains a backlog across fresh passes (stub claude),
 # and request-scoped unseed removes a left-open TASKS.md.
