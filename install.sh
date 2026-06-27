@@ -259,6 +259,21 @@ if command -v git >/dev/null 2>&1; then
 else echo "    SKIP loop:commit-* / merge:* (git not installed)"; fi
 rm -rf "$LIGDIR"
 
+# ---- worktree isolation: a gate run INSIDE a worktree resolves loop STATE at the SHARED
+# root (so a pass in .claude/worktrees/* drains the same backlog), and code in a worktree
+# is still gated. Outside /tmp so metaRe's ^/tmp/ exclusion doesn't mask edit gating.
+if command -v git >/dev/null 2>&1; then
+  WTR="$HOME/.phalanx-wt-selftest"; rm -rf "$WTR"; mkdir -p "$WTR"
+  ( cd "$WTR" && git init -q && git config user.email a@b.c && git config user.name a && git commit -q --allow-empty -m init && git branch -M main && git checkout -q -b task/w && git commit -q --allow-empty -m w && git checkout -q main && git worktree add -q .claude/worktrees/wt task/w ) >/dev/null 2>&1
+  WT="$WTR/.claude/worktrees/wt"
+  liw() { echo "$1" | PHALANX_WARN= node "$LIGG"; }
+  printf '# T\n- [ ] do it\n' > "$WTR/TASKS.md"   # backlog ONLY at the shared root
+  o=$(liw "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$WT/src/a.js\"},\"cwd\":\"$WT\",\"session_id\":\"wt1\"}"); expect_allow "worktree:edit-sees-shared-seed" x "$o"
+  printf '# T\n- [x] done\n' > "$WTR/TASKS.md"   # empty shared backlog -> 5a fires from worktree
+  o=$(liw "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$WT/src/a.js\"},\"cwd\":\"$WT\",\"session_id\":\"wt2\"}"); expect_deny "worktree:seed-gate-from-worktree" x "$o"
+  ( cd "$WTR" && git worktree remove --force .claude/worktrees/wt >/dev/null 2>&1 ); rm -rf "$WTR"
+else echo "    SKIP worktree:* (git not installed)"; fi
+
 # item 4 context-budget: occupancy from the REAL usage signal (last transcript usage
 # line) + env-derived window (PHALANX_CTX_WINDOW, default ~1M) -- NOT raw byte size.
 CBJ="$TG/context-budget.js"
