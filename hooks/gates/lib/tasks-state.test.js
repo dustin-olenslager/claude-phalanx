@@ -60,4 +60,19 @@ assert.equal(H.CHECKOUT_MAIN.test("git checkout task/x"), false);
 assert.equal(H.PUSH_MAIN.test("git push origin main"), true);
 assert.equal(H.PUSH_MAIN.test("git push origin task/x"), false);
 
+// GIT_MERGE must match the `git merge` SUBCOMMAND only (v1.6.7 false-positive fix).
+assert.equal(H.GIT_MERGE.test("git checkout main && git merge --no-ff task/x"), true);
+assert.equal(H.GIT_MERGE.test("git merge task/x"), true);
+assert.equal(H.GIT_MERGE.test("git checkout -b task/merge-ui"), false);   // branch name, not subcommand
+assert.equal(H.GIT_MERGE.test('git commit -m "prep for merge"'), false);  // commit message
+assert.equal(H.GIT_MERGE.test("git switch feature/merge-stuff"), false);
+
+// migration-path detection (rule 5d): keep migration-bearing branches out of auto-merge.
+assert.equal(H.pathsTouchMigration(["src/app.ts", "drizzle/0020_x.sql"]), true);
+assert.equal(H.pathsTouchMigration(["prisma/migrations/20240101_x/migration.sql"]), true);
+assert.equal(H.pathsTouchMigration(["db/migrate/0003.py"]), true);
+assert.equal(H.pathsTouchMigration(["src/migrations.ts"]), false);        // not under a migrations/ dir
+assert.equal(H.pathsTouchMigration(["src/a.ts", "README.md"]), false);
+assert.equal(H.pathsTouchMigration([]), false);
+
 console.log("ok: tasks-state lib helpers pass");

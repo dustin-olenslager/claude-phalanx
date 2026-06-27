@@ -80,6 +80,12 @@ if (tool === "Bash") {
       if (!src || !H.verifyFlagFreshFor(cwd, src)) {
         return out("deny", "Loop-integrity gate (item 5c): merge of '" + (src || "?") + "' into main blocked -- no GREEN verify recorded for that branch this pass. Fix → check out the task branch, run the build/test/lint/typecheck GREEN, then merge. NEVER merges on red (non-bypassable, ignores PHALANX_WARN).");
       }
+      // (d) migration safety: a branch that adds/edits a DB migration must NOT auto-merge.
+      // Autonomous merge→deploy would ship code whose migration is not yet applied to prod
+      // (missing columns → 500s). prod-DB changes stay operator-gated. Non-bypassable.
+      if (H.branchTouchesMigration(cwd, src)) {
+        return out("deny", "Loop-integrity gate (item 5d): merge of '" + src + "' into main blocked -- it changes a DB migration. Autonomous merge+deploy would ship code whose migration is not yet applied to prod (500s). Fix → apply the migration to prod and sign off, then merge by hand (or open a PR). prod-DB changes are never auto-executed.");
+      }
     }
   }
 
