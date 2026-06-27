@@ -12,6 +12,7 @@
  */
 const fs = require("fs");
 const path = require("path");
+const cp = require("child_process");
 
 // stdin reader + JSON parse. readStdin() returns raw text (""); readInput() parses
 // to an object ({}). Both swallow errors, matching every gate's inline version.
@@ -84,6 +85,57 @@ function flagHelpers(dir) {
   };
 }
 
+// Cross-pass "verify ran green" flag, keyed on repo + branch (NOT session id) and
+// stored under the repo's own .claude-runs/, so a fresh supervisor pass (new session
+// id) still sees a verify that an earlier pass on the same branch recorded. This is
+// the fix for the cross-pass verify bug: the old /tmp/<sid> key vanished on relaunch
+// and hard-blocked the pass-N+1 commit.
+//
+// SINGLE-WRITER contract: only pipeline-gate.js WRITES it (markVerified) -- on a
+// verify skill or a verify command. loop-integrity-gate.js only READS it
+// (verifyFlagFresh). Both gates fire on the same Bash event, so pipeline-gate's
+// write precedes loop-integrity's read within the turn.
+function repoRoot(cwd) {
+  try {
+    return cp.execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || cwd;
+  } catch { return cwd; }
+}
+function currentBranch(cwd) {
+  try {
+    return cp.execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch { return ""; }
+}
+const VERIFY_FLAG_TTL_MS = 12 * 60 * 60 * 1000; // a stale flag older than 12h is ignored + swept
+function verifyFlagPath(cwd) {
+  const root = repoRoot(cwd);
+  const branch = (currentBranch(cwd) || "nobranch").replace(/[^a-zA-Z0-9_.-]/g, "_");
+  return path.join(root, ".claude-runs", "verified." + branch);
+}
+function sweepStaleVerifyFlags(cwd) {
+  try {
+    const dir = path.join(repoRoot(cwd), ".claude-runs");
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.startsWith("verified.")) continue;
+      const p = path.join(dir, f);
+      try { if (Date.now() - fs.statSync(p).mtimeMs > VERIFY_FLAG_TTL_MS) fs.unlinkSync(p); } catch {}
+    }
+  } catch {}
+}
+function markVerified(cwd) {
+  try {
+    const p = verifyFlagPath(cwd);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, new Date().toISOString());
+  } catch {}
+}
+function verifyFlagFresh(cwd) {
+  sweepStaleVerifyFlags(cwd);
+  try {
+    const st = fs.statSync(verifyFlagPath(cwd));
+    return Date.now() - st.mtimeMs <= VERIFY_FLAG_TTL_MS;
+  } catch { return false; }
+}
+
 // Build the META exclusion regex anchored at a gate's own install dir (HERE), so a
 // gate never fires on its own tree, .claude/, /tmp, node_modules, .git, dist, build.
 function metaRe(here) {
@@ -103,5 +155,6 @@ module.exports = {
   emit, decide,
   openTaskCount, killSwitched, supervisorActive,
   stateDir, flagHelpers, metaRe,
+  repoRoot, currentBranch, markVerified, verifyFlagFresh,
   CODE, TS, VERIFY_CMD,
 };

@@ -28,16 +28,6 @@ const OFF = path.join(HERE, '.secret-scan-off');
 // NOT this one -- a hard-coded credential is non-bypassable by env.
 const block = (msg) => out('deny', msg);
 
-// Item 3 (gates as teachers): remediation recipes from the policy contract
-// (<CLAUDE_DIR>/risk-policy.json); missing file/key -> inline fallback. Read-only:
-// never changes whether the gate fires, only the help text.
-let POLICY = {};
-try { POLICY = JSON.parse(fs.readFileSync(path.join(HERE, 'risk-policy.json'), 'utf8')); } catch {}
-const rx = (k, fallback) => {
-  const r = POLICY && POLICY.remediation && POLICY.remediation[k];
-  return (typeof r === 'string' && r.trim()) ? r : fallback;
-};
-
 let input = {};
 try { input = JSON.parse(readStdin() || '{}'); } catch { allow(); }
 if (fs.existsSync(OFF)) allow();
@@ -102,7 +92,7 @@ if (tool === 'Bash') {
       line++;
     } else if (!raw.startsWith('-')) { line++; }
   }
-  if (hits.length) return block('Secret-scan gate: commit blocked — hard-coded credential(s) in the staged diff:\n  ' + hits.slice(0, 20).join('\n  ') + '\n' + rx('secret:commit', 'Fix → unstage the secret, move it to an env var / secret store, then re-stage and commit.') + ' Override: touch ' + OFF + '.');
+  if (hits.length) return block('Secret-scan gate: commit blocked — hard-coded credential(s) in the staged diff:\n  ' + hits.slice(0, 20).join('\n  ') + '\nFix → unstage the secret, move it to an env var / secret store, then re-stage and commit. Override: touch ' + OFF + '.');
   allow();
 }
 
@@ -119,7 +109,7 @@ if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(tool)) {
   for (const l of text.split('\n')) if (isSecretLine(l)) hits.push(labelFor(l));
   if (hits.length) {
     const uniq = [...new Set(hits)];
-    return block('Secret-scan gate: write blocked — looks like a hard-coded credential (' + uniq.join(', ') + ') in ' + (fp || 'this content') + '. ' + rx('secret:write', 'Fix → replace the literal with an env/secret-store reference (process.env.X, import.meta.env, os.environ). Never write a credential to disk.') + ' Override: touch ' + OFF + '.');
+    return block('Secret-scan gate: write blocked — looks like a hard-coded credential (' + uniq.join(', ') + ') in ' + (fp || 'this content') + '. Fix → replace the literal with an env/secret-store reference (process.env.X, import.meta.env, os.environ). Never write a credential to disk. Override: touch ' + OFF + '.');
   }
   allow();
 }

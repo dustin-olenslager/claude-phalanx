@@ -10,10 +10,10 @@
 //
 // Occupancy uses the REAL usage signal -- the most recent assistant turn's usage in
 // the JSONL transcript (input + cache_read + cache_creation), exactly what the Claude
-// Code gauge shows. The old raw-byte estimate (bytes/3.5 of the whole transcript)
-// counted the fixed system prompt + CLAUDE.md dump and drifted to ~200% while the
-// gauge sat at ~17%, forcing premature checkpoints. Byte estimate is now a fallback;
-// window is env-derived (Opus 4.x ~1M), not a hardcoded 200k.
+// Code gauge shows. When no usage line exists yet we skip the nudge for this turn
+// rather than guess from raw bytes (the old bytes/3.5 estimate counted the fixed
+// system prompt + CLAUDE.md dump and drifted to ~200% while the gauge sat at ~17%).
+// Window is env-derived (Opus 4.x ~1M), not a hardcoded 200k.
 const fs = require("fs");
 const path = require("path");
 const H = require("./lib/phalanx-hook.js");
@@ -27,7 +27,6 @@ function ctxWindow() {
 const WINDOW_TOKENS = ctxWindow();
 const CEILING = 0.45;         // never exceed 45%
 const WARN = 0.38;            // early nudge to start wrapping the current unit
-const CHARS_PER_TOKEN = 3.5;  // fallback-only: rough tokens-per-char for byte estimate
 const ONESHOT = process.env.PHALANX_ONESHOT === "1";
 
 const readInput = H.readInput;
@@ -40,8 +39,7 @@ const supervisorActive = H.supervisorActive;
 // The last assistant turn's usage = the actual prompt size sent = context occupancy
 // the gauge shows. Read a bounded tail (trailing tool_result lines can be large) and
 // scan complete lines backward for the first message.usage. null when none found.
-// ponytail: 1MB tail, not a full-file parse; a trailing entry >~1MB falls back to the
-// byte estimate -- rare, and safe now the window is ~1M not 200k.
+// ponytail: 1MB tail, not a full-file parse; null when no usage line is in the tail.
 function lastUsageTokens(tp, size) {
   try {
     const span = Math.min(size, 1024 * 1024);
@@ -77,11 +75,11 @@ if (H.openTaskCount(cwd) === 0) emit("");
 let bytes = 0;
 try { bytes = fs.statSync(tp).size; } catch { emit(""); }
 
-// Prefer the real usage signal; fall back to the byte estimate only when the
-// transcript has no usage line yet.
+// Real usage signal only. No usage line yet (very early in a session) -> skip the
+// nudge this turn rather than guess from raw bytes.
 const real = lastUsageTokens(tp, bytes);
-const estTokens = real != null ? real : Math.round(bytes / CHARS_PER_TOKEN);
-const frac = estTokens / WINDOW_TOKENS;
+if (real == null) emit("");
+const frac = real / WINDOW_TOKENS;
 
 if (frac < WARN) emit(""); // healthy, say nothing
 

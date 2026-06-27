@@ -162,9 +162,6 @@ so no bot tokens/infra leak in. An adapter only implements the port:
 - `touch ~/.claude/.pipeline-off`      → "stop pipeline"
 - `touch ~/.claude/.ts-arch-off`       → "stop effect" / "stop clean-arch"
 - `touch ~/.claude/.secret-scan-off`   → disable secret scan
-- `touch ~/.claude/.risk-routing-on`   → opt IN to risk-routed fast-path (also needs `riskRouting.enabled:true` in `risk-policy.json`; default OFF = full gate depth on every change)
-- `touch ~/.claude/.gc-on`             → opt IN to the cleanup/GC scan (also needs `gc.enabled:true`; soft, never a gate — see `skills/gc-loop`)
-- `touch ~/.claude/.evidence-on`       → opt IN to first-class browser evidence (also needs `evidence.enabled:true`; soft, never required for `verify` — see `scripts/evidence.sh`)
 - `export PHALANX_WARN=1`              → gates warn instead of hard-block
 - caveman comms: say "stop caveman" / "normal mode"
 
