@@ -51,10 +51,12 @@ The point of the loop is finishing — tested work lands and ships. After a task
      git checkout main && git merge --no-ff task/<slug> && git push origin main
      ```
      Use `--no-ff` (one merge commit per task → clean `git revert -m 1 <sha>` rollback). The gate hard-blocks this unless `.phalanx-automerge` exists AND the MERGED branch has a fresh green verify flag — it is non-bypassable, so a red branch can never merge.
+   - **Migration safety (rule 5d):** if the task branch adds/edits a DB migration (drizzle/migrations/prisma/alembic/…), the gate hard-blocks the merge — autonomous deploy of code whose migration isn't applied to prod 500s. Do NOT try to force it: write `BLOCKED: migration in <branch> — apply to prod + sign off, then merge by hand` to PROGRESS.md and stop. prod-DB changes are operator-gated.
 2. **Deploy — only if the repo defines it.** After a successful merge, look for an executable `.phalanx-deploy` at the repo root.
    - **Absent:** merge only. Report the merged SHA, done.
    - **Present:** run it (`bash .phalanx-deploy`), capture exit code. Record the merged SHA + deploy result to PROGRESS.md.
      - Deploy FAILED (nonzero): do NOT auto-revert main (avoid thrash). Write `BLOCKED: deploy failed for <repo> @ <merged-sha> (exit N) — needs operator` to PROGRESS.md and STOP. The operator decides revert vs forward-fix.
+   - **Codemagic / mobile (APK):** for repos that build a mobile app on Codemagic, the build triggers on a pushed git TAG (`v*` → APK to the operator, `release-v*` → Play). To ship a fresh APK, the repo's `.phalanx-deploy` ends by pushing such a tag (e.g. `git tag "v1.0.$(date +%y%m%d%H%M)" && git push origin "$(git describe --tags --abbrev=0)"`). No engine change — the loop already has tag-push creds. Keep the tag pattern in the per-repo `.phalanx-deploy`, not here.
 3. **Push creds:** the supervisor injects `GH_TOKEN` (dedicated scoped PAT) only on the `claude` exec env. Run `gh auth setup-git` once so `git push` uses it; `gh` uses `GH_TOKEN` directly for PRs. Never echo the token; never write it into a remote URL that gets committed.
 
 The operator-risk HALT and prod-DB-migration gate below STILL apply BEFORE any merge — a data-loss/irreversible task is BLOCKED, never merged.
