@@ -16,6 +16,7 @@
 // window is env-derived (Opus 4.x ~1M), not a hardcoded 200k.
 const fs = require("fs");
 const path = require("path");
+const H = require("./lib/phalanx-hook.js");
 
 // Model context window in tokens. Override per-model via PHALANX_CTX_WINDOW; default
 // ~1M (Opus 4.x). Bad/empty/non-positive env -> the safe default.
@@ -29,28 +30,12 @@ const WARN = 0.38;            // early nudge to start wrapping the current unit
 const CHARS_PER_TOKEN = 3.5;  // fallback-only: rough tokens-per-char for byte estimate
 const ONESHOT = process.env.PHALANX_ONESHOT === "1";
 
-function readInput() {
-  try { return JSON.parse(fs.readFileSync(0, "utf8") || "{}"); }
-  catch { return {}; }
-}
-function emit(ctx) {
-  if (ctx) process.stdout.write(JSON.stringify({
-    hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: ctx },
-  }));
-  process.exit(0);
-}
+const readInput = H.readInput;
+const emit = (ctx) => H.emit("PostToolUse", ctx);
 
 // A supervisor (run-work.sh) IS an external fresh-process resumer: when one is
 // driving, a ceiling hit must checkpoint + exit, NEVER tell a human to /clear.
-// Detected by the env the supervisor exports to each pass, or a live pidfile.
-function supervisorActive(dir) {
-  if (process.env.PHALANX_SUPERVISOR === "1") return true;
-  try {
-    const pid = parseInt(fs.readFileSync(path.join(dir, ".claude-runs", "supervisor.pid"), "utf8").trim(), 10);
-    if (pid > 0) { process.kill(pid, 0); return true; }
-  } catch {}
-  return false;
-}
+const supervisorActive = H.supervisorActive;
 
 // The last assistant turn's usage = the actual prompt size sent = context occupancy
 // the gauge shows. Read a bounded tail (trailing tool_result lines can be large) and
@@ -87,13 +72,7 @@ if (!tp || !fs.existsSync(tp)) emit("");
 
 // Only speak in loop sessions -- a repo with open TASKS.md items. Stay silent in
 // ordinary interactive sessions so the ceiling nudge isn't noise.
-let openTasks = 0;
-try {
-  const t = fs.readFileSync(path.join(cwd, "TASKS.md"), "utf8");
-  const m = t.match(/^\s*-\s*\[\s*\]/gm);
-  openTasks = m ? m.length : 0;
-} catch {}
-if (openTasks === 0) emit("");
+if (H.openTaskCount(cwd) === 0) emit("");
 
 let bytes = 0;
 try { bytes = fs.statSync(tp).size; } catch { emit(""); }

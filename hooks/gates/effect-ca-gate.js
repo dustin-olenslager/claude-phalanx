@@ -11,16 +11,12 @@
  */
 const fs = require('fs');
 const path = require('path');
+const H = require('./lib/phalanx-hook.js');
 const HERE = __dirname;
 
-function readStdin() { try { return fs.readFileSync(0, 'utf8'); } catch { return ''; } }
+const readStdin = H.readStdin;
 function allow() { process.exit(0); }
-function out(decision, reason) {
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason },
-  }));
-  process.exit(0);
-}
+const out = (decision, reason) => H.decide('PreToolUse', decision, reason);
 
 const OFF = path.join(HERE, '.ts-arch-off');
 const WARN_ONLY = process.env.PHALANX_WARN === '1';
@@ -41,11 +37,8 @@ if (fs.existsSync(OFF)) allow();
 
 const tool = input.tool_name || '';
 const ti = input.tool_input || {};
-const sid = (input.session_id || 'nosess').replace(/[^a-zA-Z0-9_-]/g, '');
-const stateDir = path.join('/tmp/phalanx-tsarch', sid);
-const flag = (n) => path.join(stateDir, n);
-const setFlag = (n) => { try { fs.mkdirSync(stateDir, { recursive: true }); fs.writeFileSync(flag(n), '1'); } catch {} };
-const hasFlag = (n) => { try { return fs.existsSync(flag(n)); } catch { return false; } };
+const stateDir = H.stateDir('/tmp/phalanx-tsarch', input.session_id);
+const { hasFlag, setFlag } = H.flagHelpers(stateDir);
 
 if (tool === 'Skill') {
   const name = (ti.skill || ti.name || '') + '';
@@ -56,11 +49,8 @@ if (tool === 'Skill') {
 
 if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'NotebookEdit') {
   const fp = (ti.file_path || ti.notebook_path || '') + '';
-  const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|dart|py|go|rs|java|kt|kts|sql|vue|svelte|rb|php|c|h|cpp|hpp|cs|swift|scala|ex|exs)$/i;
-  const TS = /\.(ts|tsx|mts|cts)$/i;
-  const esc = HERE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const META = new RegExp('(^' + esc + '|/\\.claude/|^/tmp/|/node_modules/|/\\.git/|/dist/|/build/)');
-  if (!(CODE.test(fp) && !META.test(fp))) allow();
+  const TS = H.TS;
+  if (!(H.CODE.test(fp) && !H.metaRe(HERE).test(fp))) allow();
 
   const missing = [];
   if (!hasFlag('ca')) missing.push(rx('effect-ca:ca', 'clean-architecture — Fix → consult the skill, then retry: deps inward, business rules free of IO/frameworks, ports+adapters, DTO boundaries, one composition root; enforce at verify via arch-enforce.'));

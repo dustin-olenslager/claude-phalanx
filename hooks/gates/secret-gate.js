@@ -15,16 +15,12 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const H = require('./lib/phalanx-hook.js');
 const HERE = __dirname;
 
-function readStdin() { try { return fs.readFileSync(0, 'utf8'); } catch { return ''; } }
+const readStdin = H.readStdin;
 function allow() { process.exit(0); }
-function out(decision, reason) {
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason },
-  }));
-  process.exit(0);
-}
+const out = (decision, reason) => H.decide('PreToolUse', decision, reason);
 
 // Off switch MUST live under CLAUDE_DIR (HERE), never the agent-writable repo.
 const OFF = path.join(HERE, '.secret-scan-off');
