@@ -64,6 +64,13 @@ else
   echo "    kept existing $CLAUDE_DIR/risk-policy.json"
 fi
 
+# Headless OAuth token file must never be group/other-readable -- run-work.sh
+# refuses to read it otherwise. Tighten perms if the operator has created it.
+if [ -f "$CLAUDE_DIR/.headless-env" ]; then
+  chmod 600 "$CLAUDE_DIR/.headless-env" 2>/dev/null || true
+  echo "==> chmod 600 $CLAUDE_DIR/.headless-env"
+fi
+
 echo "==> memory dir"
 MEMORY_DIR="${MEMORY_DIR:-$CLAUDE_DIR/memory}"
 mkdir -p "$MEMORY_DIR"

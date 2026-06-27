@@ -19,6 +19,20 @@ case "$REMOTE_URL" in *claude-phalanx*) is_public=1 ;; esac
 # never interferes with your other (private) repositories' workflows.
 [ "$is_public" = 1 ] || exit 0
 
+# PUBLIC push = FAIL-CLOSED on gitleaks. gitleaks is mandatory here: if it is not
+# installed, or it errors/flags, REJECT the push rather than silently downgrading
+# to the weaker regex set below. The regex pass still runs as defense in depth.
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "PHALANX LEAK GUARD: gitleaks is REQUIRED for pushes to the public repo but is not installed."
+  echo "Install gitleaks (https://github.com/gitleaks/gitleaks) and retry. Push REJECTED (fail-closed)."
+  exit 1
+fi
+if ! gitleaks detect --no-banner --redact -s . >/dev/null 2>&1; then
+  echo "PHALANX LEAK GUARD: gitleaks flagged secrets (or errored) in the working tree/history."
+  echo "Run 'gitleaks detect --redact -s .' to inspect. Push REJECTED (fail-closed)."
+  exit 1
+fi
+
 SECRET_RE='AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|sk_live_[0-9a-zA-Z]{16,}|AIza[0-9A-Za-z_-]{35}|sk_mt_[0-9A-Za-z]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|(api[_-]?key|secret|token|password|passwd|client[_-]?secret|access[_-]?token)["'"'"' ]*[:=]["'"'"' ]*["'"'"'][^"'"'"']{16,}["'"'"']'
 SECRET_ALLOW='process\.env|import\.meta\.env|os\.environ|getenv|Deno\.env|YOUR_|REPLACE|EXAMPLE|placeholder|xxxx|\$\{|noreply'
 
@@ -32,7 +46,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
   [ -n "$added" ] || continue
 
-  sh=$(printf '%s\n' "$added" | grep -EnI "$SECRET_RE" | grep -EviI "$SECRET_ALLOW" || true)
+  # Scope the allowlist to the MATCHED substring (-o), not the whole added line:
+  # a benign `process.env.X` elsewhere on the line must not mask a real secret.
+  sh=$(printf '%s\n' "$added" | grep -EnIo "$SECRET_RE" | grep -EviI "$SECRET_ALLOW" || true)
   if [ -n "$sh" ]; then
     echo "PHALANX LEAK GUARD: possible SECRET in pushed commits:"; printf '  %s\n' "$sh" | head -12; fail=1
   fi
