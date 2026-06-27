@@ -112,6 +112,26 @@ scripts/supervisord.sh stop   -r <repo>    # or: touch <repo>/.work-off
 - **Operator-risk halt**: a task implying data-loss / irreversible-prod change is never
   auto-run — it becomes a `BLOCKED:` line for the human.
 
+## Reporting & adapters
+
+Phalanx owns the **engine** (loop, supervisor, gates) and a notify **port**; the
+messengers (Telegram, WhatsApp, …) are **edge adapters** — kept out of this public repo
+so no bot tokens/infra leak in. An adapter only implements the port:
+
+- `notify.sh` posts lifecycle events (`start`/`progress`/`done`/`blocked`) to
+  `PHALANX_NOTIFY_CMD` (`<cmd> <event> <message> <repo> <thread>`) or `PHALANX_NOTIFY_URL`
+  (JSON `{event,message,repo,host,thread}`).
+- **`thread`** is the per-job routing key (default: the repo name; override with
+  `PHALANX_NOTIFY_THREAD`). An adapter maps it to a Telegram **topic**/chat so each job
+  stays in its own thread instead of one blurred feed.
+- **Source of record is the repo's `PROGRESS.md`**, not the chat — notify is just a ping
+  ("repo X: phase 3 green ✅"); open the repo for detail.
+- **No human `/clear`/`/new`:** drive jobs through the supervisor (`bot-handoff.sh` →
+  `supervisord.sh`; each pass exports `PHALANX_SUPERVISOR=1`). A context ceiling then
+  checkpoints and relaunches a fresh pass automatically — the human is never asked to reset
+  context. A bare interactive `claude -p` with no supervisor is the only path that still
+  surfaces a manual-resume note.
+
 ## Override flags
 
 - `touch ~/.claude/.pipeline-off`      → "stop pipeline"
