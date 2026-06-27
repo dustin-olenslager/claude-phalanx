@@ -1,0 +1,66 @@
+name: ci
+# Exercises the project's OWN embedded self-test (the ~40 assertions inside
+# install.sh) plus static checks. install.sh is run against a throwaway
+# CLAUDE_DIR; PHALANX_NO_CRON=1 + PHALANX_NO_GUARDS=1 keep CI from mutating the
+# runner's crontab or global git config (install-guards.sh sets
+# `git config --global core.hooksPath`).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: install.sh self-test (isolated CLAUDE_DIR, no cron, no global git hooks)
+        run: |
+          set -euo pipefail
+          CLAUDE_DIR="$(mktemp -d)"
+          echo "CLAUDE_DIR=$CLAUDE_DIR"
+          CLAUDE_DIR="$CLAUDE_DIR" \
+          PHALANX_NO_CRON=1 \
+          PHALANX_NO_GUARDS=1 \
+            bash ./install.sh
+
+  static:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: node --check gates
+        run: |
+          set -euo pipefail
+          find hooks -name '*.js' -print0 | xargs -0 -n1 node --check
+          find scripts -name '*.mjs' -print0 | xargs -0 -n1 node --check
+      - name: bash -n (syntax fallback)
+        run: |
+          set -euo pipefail
+          find scripts hooks -name '*.sh' -print0 | xargs -0 -n1 bash -n
+      - name: shellcheck (ubuntu)
+        if: runner.os == 'Linux'
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: "."
+          additional_files: "install.sh uninstall.sh"
+      - name: shellcheck (macos / BSD env)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          brew install shellcheck
+          find scripts hooks -name '*.sh' -print0 | xargs -0 shellcheck -S warning
+          shellcheck -S warning install.sh uninstall.sh
