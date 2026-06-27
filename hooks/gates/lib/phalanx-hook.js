@@ -61,7 +61,12 @@ const RESPAWN_WINDOW = 600;
 // mention the word ("### BLOCKED", "| (BLOCKED -- skipped) |", "was BLOCKED on").
 const BLOCKED_RE = /^[ \t]*-?[ \t]*BLOCKED:/m;
 
+// Loop STATE (TASKS.md, PROGRESS.md) is read from the SHARED repo root, so a session
+// running inside a worktree sees the SAME backlog/checkpoint as the primary checkout
+// (a worktree is a fresh checkout without these untracked files). repoRoot() resolves to
+// the shared root via --git-common-dir; for a normal repo it equals the cwd's toplevel.
 function readRepoFile(cwd, name) {
+  try { return fs.readFileSync(path.join(repoRoot(cwd), name), "utf8"); } catch {}
   try { return fs.readFileSync(path.join(cwd, name), "utf8"); } catch { return ""; }
 }
 
@@ -165,6 +170,18 @@ function flagHelpers(dir) {
 // (verifyFlagFresh). Both gates fire on the same Bash event, so pipeline-gate's
 // write precedes loop-integrity's read within the turn.
 function repoRoot(cwd) {
+  // The SHARED main repo root -- IDENTICAL from the primary checkout and from any linked
+  // worktree under .claude/worktrees/*. Resolving via --git-common-dir (the .git dir all
+  // worktrees share) means the loop's markers (.phalanx-autorun/automerge/deploy) and the
+  // verify flags live in ONE place every worktree's gate sees. Falls back to the worktree's
+  // own toplevel, then cwd. For a normal (worktree-less) repo this equals --show-toplevel.
+  try {
+    const common = cp.execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    if (common) {
+      const root = common.replace(/\/\.git\/?$/, "");
+      return root && root !== common ? root : path.dirname(common);
+    }
+  } catch {}
   try {
     return cp.execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || cwd;
   } catch { return cwd; }
@@ -218,7 +235,11 @@ function verifyFlagFresh(cwd) {
 // gate never fires on its own tree, .claude/, /tmp, node_modules, .git, dist, build.
 function metaRe(here) {
   const esc = here.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp("(^" + esc + "|/\\.claude/|^/tmp/|/node_modules/|/\\.git/|/dist/|/build/)");
+  // Exclude the gate's own tree, CLAUDE config, tmp, vendored/build dirs -- but NOT a
+  // project's .claude/worktrees/ (per-pass worktrees hold REAL project code that MUST
+  // still be gated: standards, seed-before-edit, no-commit-before-verify). The negative
+  // lookahead keeps .claude/<config> excluded while letting .claude/worktrees/ through.
+  return new RegExp("(^" + esc + "|/\\.claude/(?!worktrees/)|^/tmp/|/node_modules/|/\\.git/|/dist/|/build/)");
 }
 
 // Source-file extensions treated as "code" by the edit gates.
@@ -231,7 +252,8 @@ const VERIFY_CMD = /(playwright|\be2e\b|vitest|jest|flutter\s+test|pytest|\bgo\s
 // ── Autonomous merge-on-green into main (loop-integrity rule 5c) ──────────────
 // The `git merge` SUBCOMMAND specifically — NOT the word "merge" anywhere after git
 // (which false-fired on `git checkout -b task/merge-x` and `git commit -m "...merge..."`).
-const GIT_MERGE = /\bgit\s+merge\b/;
+// Allows a leading `-C <path>` so the worktree-land form `git -C <main> merge` still gates.
+const GIT_MERGE = /\bgit\s+(?:-C\s+\S+\s+)?merge\b/;
 // …whose TARGET is main: either we are already on main, or the same command line
 // checks out / switches to main first (the canonical `git checkout main && git merge`).
 const CHECKOUT_MAIN = /\bgit\b[^\n]*\b(checkout|switch)\b[^\n]*\b(main|master)\b/;
@@ -242,6 +264,14 @@ const PUSH_MAIN = /\bgit\b[^\n]*\bpush\b[^\n]*\b(main|master)\b/;
 // and `-m <msg>` and never returning main/master (the target). Used to look up that
 // branch's verify flag. Canonical form documented for the orchestrator is
 // `git merge --no-ff <branch>`; this still tolerates flag/branch reordering.
+// The `-C <path>` target of a `git -C <path> merge ...` command (the worktree-land form
+// merges into the PRIMARY tree, which stays on main). Returns the path (quotes stripped)
+// or "" when the merge runs in cwd. Lets the gate check the TARGET tree's branch, so a
+// land from a worktree (currentBranch = task branch) is still recognized as into-main.
+function mergeCwdPath(cmd) {
+  const m = /\bgit\s+-C\s+("[^"]+"|'[^']+'|\S+)\s+merge\b/.exec(cmd || "");
+  return m ? m[1].replace(/^['"]|['"]$/g, "") : "";
+}
 function mergedBranch(cmd) {
   const m = /\bgit\b[^\n]*?\bmerge\b([^\n&|;]*)/.exec(cmd || "");
   if (!m) return "";
@@ -307,7 +337,7 @@ module.exports = {
   respawnActive, respawnPresent, riskLineOf, tasksState,
   stateDir, flagHelpers, metaRe,
   repoRoot, currentBranch, markVerified, verifyFlagFresh, verifyFlagFreshFor,
-  GIT_MERGE, CHECKOUT_MAIN, PUSH_MAIN, mergedBranch, autoMergeEnabled, deployScript,
+  GIT_MERGE, CHECKOUT_MAIN, PUSH_MAIN, mergedBranch, mergeCwdPath, autoMergeEnabled, deployScript,
   autorunEnabled, MIGRATION_PATH, pathsTouchMigration, branchTouchesMigration,
   CODE, TS, VERIFY_CMD,
 };
