@@ -36,7 +36,11 @@ NOTIFY="$HERE/notify.sh"; [ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
 TASKS="$REPO/TASKS.md"; PROGRESS="$REPO/PROGRESS.md"; LOGDIR="$REPO/.claude-runs"
 PIDF="$LOGDIR/supervisor.pid"; LOCK="$LOGDIR/supervisor.lock"
-mkdir -p "$LOGDIR"
+# Per-run log subdir so the -b token budget counts ONLY this run's passes, not
+# every historical pass-*.log ever written for this repo (item 1). Old logs stay.
+RUN_STAMP="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo 0)-$$"
+RUNDIR="$LOGDIR/run-$RUN_STAMP"
+mkdir -p "$RUNDIR"
 
 note() { [ -x "$NOTIFY" ] && PHALANX_REPO="$REPO" "$NOTIFY" "$1" "$2" >/dev/null 2>&1 || true; }
 
@@ -63,7 +67,7 @@ if [ ! -f "$TASKS" ]; then echo "No TASKS.md in $REPO. Create one with '- [ ]' i
 backlog_empty() { [ -f "$TASKS" ] || return 0; ! grep -Eq '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]' "$TASKS"; }
 off()           { [ -f "$REPO/.work-off" ] || [ -f "$CLAUDE_DIR/.work-off" ]; }
 blocked()       { [ -f "$PROGRESS" ] && tail -n 25 "$PROGRESS" | grep -q 'BLOCKED'; }
-spent_tokens()  { local b; b=$(cat "$LOGDIR"/pass-*.log 2>/dev/null | wc -c); echo $(( b / 4 )); }
+spent_tokens()  { local b; b=$(cat "$RUNDIR"/pass-*.log 2>/dev/null | wc -c); echo $(( b / 4 )); }
 
 note start "supervisor up: $REPO (max=$MAX_PASSES)"
 pass=0; fails=0
@@ -76,7 +80,7 @@ while true; do
   if (( TOKEN_BUDGET > 0 )) && (( $(spent_tokens) > TOKEN_BUDGET )); then
     echo "Token budget $TOKEN_BUDGET exceeded (~$(spent_tokens)). Stopping."; STOP_REASON="budget"; break; fi
 
-  stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo 0)"; log="$LOGDIR/pass-$pass-$stamp.log"
+  stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo 0)"; log="$RUNDIR/pass-$pass-$stamp.log"
   echo "=== Pass $pass - $(date +%T 2>/dev/null) - fresh /work ==="
   note progress "pass $pass starting"
   set +e
