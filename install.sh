@@ -43,6 +43,8 @@ mkdir -p "$CLAUDE_DIR/agents" "$CLAUDE_DIR/commands"
 cp "$HERE"/agents/*.md "$CLAUDE_DIR/agents/"
 cp "$HERE"/commands/*.md "$CLAUDE_DIR/commands/"
 cp "$HERE"/scripts/run-work.sh "$HERE"/scripts/run-work.ps1 "$CLAUDE_DIR/" 2>/dev/null || true
+# Sourced by run-work.sh (single source of truth for TASKS/PROGRESS parsing).
+cp "$HERE"/scripts/tasks-state.sh "$CLAUDE_DIR/" 2>/dev/null || true
 # v1.4 no-babysit: supervisor process-manager, auto-start watcher, notify sink,
 # request-scoped seed/unseed, and the Telegram bot hand-off entrypoint.
 cp "$HERE"/scripts/supervisord.sh "$HERE"/scripts/phalanx-watch.sh "$HERE"/scripts/notify.sh \

@@ -44,11 +44,64 @@ function decide(hookEventName, permissionDecision, permissionDecisionReason) {
 // (the autostart/intent/context-budget reading). Gates that must go inert when
 // TASKS.md is wholly absent keep that branch in their own policy.
 function openTaskCount(cwd) {
-  try {
-    const t = fs.readFileSync(path.join(cwd, "TASKS.md"), "utf8");
-    const m = t.match(/^\s*-\s*\[\s*\]/gm);
-    return m ? m.length : 0;
-  } catch { return 0; }
+  return openCount(readRepoFile(cwd, "TASKS.md"));
+}
+
+// ── Single source of truth for TASKS.md / PROGRESS.md loop state ───────────
+// Replaces the ad-hoc regex re-parses that were duplicated across the gates and
+// run-work.sh (mirrored in scripts/tasks-state.sh). Pure helpers take text so they
+// are unit-testable; tasksState(cwd) is the thin fs reader over them.
+
+// First task/progress line matching a data-risk / irreversible-change phrase.
+const RISK = /(data[- ]?loss|data[- ]?continuity|irreversible|(won'?t|will ?not) be (in|captured)|(can'?t|cannot) be undone|drop\s+(table|column|database)|delete[sd]?\s+prod|destructive|truncate\b|migration cutover|cutover|backfill|\bwipe\b)/i;
+// Standard tail window for scanning append-only PROGRESS.md for the RESPAWN marker.
+const RESPAWN_WINDOW = 600;
+
+function readRepoFile(cwd, name) {
+  try { return fs.readFileSync(path.join(cwd, name), "utf8"); } catch { return ""; }
+}
+
+// Count of open `- [ ]` items in TASKS.md text.
+function openCount(tasksText) {
+  const m = (tasksText || "").match(/^\s*-\s*\[\s*\]/gm);
+  return m ? m.length : 0;
+}
+
+// A RESPAWN checkpoint is ACTIVE only when the most recent RESPAWN within the
+// standard tail window is not already struck by a later RESPAWN-DONE.
+function respawnActive(progressText) {
+  const p = progressText || "";
+  return /RESPAWN/.test(p.slice(-RESPAWN_WINDOW)) && p.lastIndexOf("RESPAWN-DONE") < p.lastIndexOf("RESPAWN");
+}
+
+// A RESPAWN marker is merely PRESENT in the standard tail window (used to suppress
+// a repeat nudge — distinct from respawnActive's un-struck question).
+function respawnPresent(progressText) {
+  return /RESPAWN/.test((progressText || "").slice(-RESPAWN_WINDOW));
+}
+
+// First open `- [ ]` task (TASKS.md) — else any line (PROGRESS.md) — flagged risky.
+function riskLineOf(tasksText, progressText) {
+  for (const l of (tasksText || "").split(/\r?\n/)) {
+    if (/^\s*-\s*\[\s*\]/.test(l) && RISK.test(l)) return l.trim();
+  }
+  for (const l of (progressText || "").split(/\r?\n/)) {
+    if (RISK.test(l)) return l.trim();
+  }
+  return "";
+}
+
+// The unified reader. blocked scans the WHOLE PROGRESS.md (a verbose pass must not
+// push the BLOCKED line out of a tail window); the rest use the helpers above.
+function tasksState(cwd) {
+  const tasks = readRepoFile(cwd, "TASKS.md");
+  const progress = readRepoFile(cwd, "PROGRESS.md");
+  return {
+    open: openCount(tasks),
+    blocked: /BLOCKED/.test(progress),
+    respawn: respawnActive(progress),
+    riskLine: riskLineOf(tasks, progress),
+  };
 }
 
 // Kill switches: per-repo cwd/.work-off OR global CLAUDE_DIR/.work-off.
@@ -154,6 +207,8 @@ module.exports = {
   readStdin, readInput,
   emit, decide,
   openTaskCount, killSwitched, supervisorActive,
+  RISK, RESPAWN_WINDOW, readRepoFile, openCount,
+  respawnActive, respawnPresent, riskLineOf, tasksState,
   stateDir, flagHelpers, metaRe,
   repoRoot, currentBranch, markVerified, verifyFlagFresh,
   CODE, TS, VERIFY_CMD,
