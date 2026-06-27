@@ -117,6 +117,7 @@ scripts/supervisord.sh stop   -r <repo>    # or: touch <repo>/.work-off
 - `touch ~/.claude/.pipeline-off`      → "stop pipeline"
 - `touch ~/.claude/.ts-arch-off`       → "stop effect" / "stop clean-arch"
 - `touch ~/.claude/.secret-scan-off`   → disable secret scan
+- `touch ~/.claude/.risk-routing-on`   → opt IN to risk-routed fast-path (also needs `riskRouting.enabled:true` in `risk-policy.json`; default OFF = full gate depth on every change)
 - `export PHALANX_WARN=1`              → gates warn instead of hard-block
 - caveman comms: say "stop caveman" / "normal mode"
 
