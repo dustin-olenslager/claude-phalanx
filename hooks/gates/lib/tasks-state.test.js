@@ -66,6 +66,19 @@ assert.equal(H.GIT_MERGE.test("git merge task/x"), true);
 assert.equal(H.GIT_MERGE.test("git checkout -b task/merge-ui"), false);   // branch name, not subcommand
 assert.equal(H.GIT_MERGE.test('git commit -m "prep for merge"'), false);  // commit message
 assert.equal(H.GIT_MERGE.test("git switch feature/merge-stuff"), false);
+assert.equal(H.GIT_MERGE.test("git -C /main merge --no-ff task/x"), true);   // worktree land form
+// mergeCwdPath: the -C target of the worktree-land merge (gate checks ITS branch).
+assert.equal(H.mergeCwdPath("git -C /main merge --no-ff task/x"), "/main");
+assert.equal(H.mergeCwdPath('git -C "/my main" merge task/x'), "/my main");
+assert.equal(H.mergeCwdPath("git merge task/x"), "");
+
+// metaRe: per-pass worktrees hold real project code -> NOT excluded (must stay gated);
+// other .claude/ config IS excluded; the gate's own tree is excluded.
+const mr = H.metaRe("/gate/here");
+assert.equal(mr.test("/proj/.claude/worktrees/wt/src/a.ts"), false); // worktree code gated
+assert.equal(mr.test("/proj/.claude/settings.json"), true);          // config excluded
+assert.equal(mr.test("/proj/src/a.ts"), false);                      // normal code gated
+assert.equal(mr.test("/gate/here/loop-integrity-gate.js"), true);    // gate's own tree excluded
 
 // migration-path detection (rule 5d): keep migration-bearing branches out of auto-merge.
 assert.equal(H.pathsTouchMigration(["src/app.ts", "drizzle/0020_x.sql"]), true);
