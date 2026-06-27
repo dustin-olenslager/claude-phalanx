@@ -70,22 +70,55 @@ try {
 } catch { stop(); }
 if (open === 0) stop();
 
+// Authoritative human-halt sentinel (item 1): control flow must NOT depend on a
+// tail/slice window of append-only PROGRESS.md -- a verbose pass can push the
+// BLOCKED line out of view. Honor the sentinel file first, then the (whole-file)
+// PROGRESS.md scan as a detector, materializing the sentinel on first sight.
+try {
+  if (fs.existsSync(path.join(cwd, ".claude-runs", "BLOCKED"))) stop();
+} catch {}
 try {
   const p = fs.readFileSync(path.join(cwd, "PROGRESS.md"), "utf8");
-  if (/BLOCKED/.test(p.slice(-600))) stop();
+  if (/BLOCKED/.test(p)) {
+    try {
+      fs.mkdirSync(path.join(cwd, ".claude-runs"), { recursive: true });
+      const m = p.match(/.*BLOCKED.*/);
+      fs.writeFileSync(path.join(cwd, ".claude-runs", "BLOCKED"), (m ? m[0] : "BLOCKED") + "\n");
+    } catch {}
+    stop();
+  }
 } catch {}
+
+// Strike the RESPAWN marker after acting on it (item 5) so a one-shot directive
+// can't re-fire on every subsequent turn. Append a STRUCK note; the next read sees
+// "RESPAWN-DONE" and ignores it. Matches only an un-struck RESPAWN.
+function strikeRespawn() {
+  try {
+    const pp = path.join(cwd, "PROGRESS.md");
+    const p = fs.readFileSync(pp, "utf8");
+    if (/RESPAWN(?!-DONE)/.test(p)) {
+      fs.appendFileSync(pp, `\n<!-- RESPAWN-DONE ${new Date().toISOString()} -- respawn handled, marker struck -->\n`);
+    }
+  } catch {}
+}
 
 let respawn = false;
 try {
   const p = fs.readFileSync(path.join(cwd, "PROGRESS.md"), "utf8");
-  respawn = /RESPAWN/.test(p.slice(-600));
+  const tail = p.slice(-600);
+  // Active only if the most recent RESPAWN is NOT already followed by a DONE strike.
+  respawn = /RESPAWN/.test(tail) && p.lastIndexOf("RESPAWN-DONE") < p.lastIndexOf("RESPAWN");
 } catch {}
 
 if (respawn) {
   // Auto-escalate: launch a detached supervisor to carry the loop to done with no
   // human /clear. (No supervisor is active -- supervisorActive() stopped us above.)
   // Fall back to the manual nudge only if the supervisor can't be launched.
-  if (launchSupervisor(cwd)) stop();
+  if (launchSupervisor(cwd)) { strikeRespawn(); stop(); }
+  // Manual nudge: gate on stop_hook_active so it isn't re-emitted every turn when
+  // the launch keeps failing (item 5). stop_hook_active is already handled above,
+  // so reaching here means this is the first emission -- strike to prevent re-fire.
+  strikeRespawn();
   cont(
     `Context ceiling was hit. You've checkpointed to PROGRESS.md. Run /clear to reset context, ` +
     `then resume the /work loop from PROGRESS.md. ${open} task(s) remain. Do not summarize -- just continue.`
