@@ -12,7 +12,7 @@ Autonomous mode. Drive work without asking me to pick tasks.
 ## Run
 4. Spawn the `orchestrator` subagent. It owns the dispatch loop (pick task → decompose → spawn workers → verify → check off → next).
 5. Honor every gate (pipeline, standards, secret) and the context-budget hook. On RESPAWN: orchestrator checkpoints to PROGRESS.md and stops; tell me to re-run /work in a fresh session (or it auto-continues if the loop wrapper is running).
-6. Git: full autonomy per orchestrator spec — branch per task, commit, push, open PR. Commit ONLY if a verify/test ran green this turn (the loop self-polices even when the global pipeline gate is muted). Never merge to main.
+6. Git: full autonomy per orchestrator spec — branch per task, commit, push, open PR. Commit ONLY if a verify/test ran green this turn (the loop self-polices even when the global pipeline gate is muted). MERGE on green ONLY in repos that opted in with a `.phalanx-automerge` marker (else open a PR); then run `.phalanx-deploy` if the repo defines one. The merge-into-main gate is non-bypassable — never on red. See the orchestrator's "Merge + deploy on green" section.
 
 ## Stop conditions (report, don't spin)
 - TASKS.md backlog empty → summarize what shipped, stop.
