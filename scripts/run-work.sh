@@ -27,6 +27,14 @@ REPO="$(cd "$REPO" 2>/dev/null && pwd)" || { echo "bad repo path" >&2; exit 1; }
 cd "$REPO"
 
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+
+# A detached/cron launch can hand run-work a PATH that has the standard bins but
+# MISSES the npm global bin where `claude` lives -> `claude` exits 127 ("No such
+# file or directory") EVERY pass -> the loop gives up after 3. Append the npm
+# global bin + standard bins (appended, so an explicit PATH such as the install
+# self-test's stub still takes precedence).
+export PATH="${PATH:+$PATH:}$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+
 # Headless auth: each `claude -p` pass needs CLAUDE_CODE_OAUTH_TOKEN -- the
 # interactive OAuth in .credentials.json is rejected for `claude -p` (401). Read
 # ONLY the token from the operator-provisioned file and pass it solely on the
