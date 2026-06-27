@@ -115,6 +115,11 @@ if (frac >= CEILING) {
   // pass (relaunched fresh) OR an interactive session (a human reopens). NEVER
   // under a bare one-shot run (no resumer) -- keeps the item-6 invariant.
   const willResume = SUP || !ONESHOT;
+  // Did a RESPAWN marker already exist before this tool call? If so we've already
+  // nudged the human once -- don't re-emit the /clear instruction every subsequent
+  // turn (item 5). stop_hook_active (when present) is the same signal: a re-entry.
+  let alreadyNudged = !!input.stop_hook_active;
+  try { if (/RESPAWN/.test(fs.readFileSync(progress, "utf8").slice(-400))) alreadyNudged = true; } catch {}
   if (willResume) {
     const line = `\n<!-- RESPAWN ${new Date().toISOString()} ctx~${pct}% -- checkpoint state above, STOP, resume fresh -->\n`;
     try {
@@ -129,6 +134,11 @@ if (frac >= CEILING) {
   }
   if (ONESHOT) {
     emit(`CONTEXT CEILING HIT (~${pct}% >= 45%) on a one-shot run with no supervisor. Wrap up the current task and report now; do not start more work. (No RESPAWN written -- no resumer in one-shot mode.)`);
+  }
+  // Bare interactive session: nudge to /clear ONCE (gated above); after that just
+  // give the terse occupancy line so the instruction doesn't repeat every turn.
+  if (alreadyNudged) {
+    emit(`Context ~${pct}% (over 45% ceiling). Already checkpointed -- STOP and resume with /work in a fresh session.`);
   }
   emit(`CONTEXT CEILING HIT (~${pct}% >= 45%). Flush remaining task state to PROGRESS.md NOW, then STOP this session. Run /work in a fresh session to resume -- it reads PROGRESS.md first.`);
 }

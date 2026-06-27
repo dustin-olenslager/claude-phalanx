@@ -58,7 +58,15 @@ if [ "${#text}" -gt "$MAX_TEXT_LEN" ]; then
 fi
 
 id="$(bash "$SEED" "$repo" "$text" $reqid | tail -n1)"
-# Pass the req id to the supervisor so its EXIT trap unseeds exactly this request
-# (item 6: no left-open TASKS.md to re-arm the loop on the next bot message).
+# Always record this req id in pending-unseed BEFORE launching (item 2). If a
+# supervisor is already running, `supervisord.sh start` is a no-op and never sees
+# PHALANX_REQ_ID -- so that supervisor's own EXIT trap would never unseed THIS
+# request and the stale line would re-arm the loop later. run-work.sh's cleanup
+# drains pending-unseed for exactly this case. Harmless when we do start fresh
+# (the same id is just dropped twice, and unseed is idempotent).
+LOGDIR="$repo/.claude-runs"; mkdir -p "$LOGDIR" 2>/dev/null || true
+printf '%s\n' "$id" >> "$LOGDIR/pending-unseed" 2>/dev/null || true
+# Pass the req id to the supervisor so (when it DOES start fresh) its EXIT trap
+# unseeds exactly this request (item 6: no left-open TASKS.md to re-arm the loop).
 PHALANX_REQ_ID="$id" bash "$SUPERVISORD" start -r "$repo" >/dev/null 2>&1 || true
 echo "autonomous run started (req:$id) on $repo; I'll report when it finishes or hits a blocker."

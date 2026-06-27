@@ -17,7 +17,17 @@ while getopts "f:" o; do case "$o" in f) REGISTRY="$OPTARG" ;; esac; done
 [ -f "$REGISTRY" ] || { echo "no registry at $REGISTRY (one repo path per line). nothing to watch."; exit 0; }
 
 has_open()      { [ -f "$1/TASKS.md" ] && grep -Eq '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]' "$1/TASKS.md"; }
-sup_alive()     { local p; p="$(cat "$1/.claude-runs/supervisor.pid" 2>/dev/null)"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
+# Verify the pid is ACTUALLY run-work.sh (item 3): without this, PID reuse after a
+# crash/reboot makes a repo look permanently supervised, so phalanx-watch never
+# restarts a dead loop. Where /proc exists, require run-work.sh in the cmdline.
+sup_alive() {
+  local p; p="$(cat "$1/.claude-runs/supervisor.pid" 2>/dev/null)"
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null || return 1
+  if [ -r "/proc/$p/cmdline" ]; then
+    tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q 'run-work.sh' || return 1
+  fi
+  return 0
+}
 off()           { [ -f "$1/.work-off" ] || [ -f "$CLAUDE_DIR/.work-off" ]; }
 
 started=0

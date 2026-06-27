@@ -52,6 +52,13 @@ NOTIFY="$HERE/notify.sh"; [ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
 TASKS="$REPO/TASKS.md"; PROGRESS="$REPO/PROGRESS.md"; LOGDIR="$REPO/.claude-runs"
 PIDF="$LOGDIR/supervisor.pid"; LOCK="$LOGDIR/supervisor.lock"
+# Structured sentinels (control flow MUST NOT depend on tail-window position):
+#  - BLOCKED file = authoritative human-halt (item 1); written the moment a
+#    BLOCKED line first appears in PROGRESS.md, honored even if later passes push
+#    that line out of any tail window.
+#  - pending-unseed = req ids that some run must unseed even if it isn't the one
+#    that seeded them (item 2: bot-handoff re-arm leak when a supervisor is up).
+BLOCKED_FILE="$LOGDIR/BLOCKED"; PENDING_UNSEED="$LOGDIR/pending-unseed"
 # Per-run log subdir so the -b token budget counts ONLY this run's passes, not
 # every historical pass-*.log ever written for this repo (item 1). Old logs stay.
 RUN_STAMP="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo 0)-$$"
@@ -61,35 +68,70 @@ mkdir -p "$RUNDIR"
 note() { [ -x "$NOTIFY" ] && PHALANX_REPO="$REPO" "$NOTIFY" "$1" "$2" >/dev/null 2>&1 || true; }
 
 # --- single-instance lock (atomic mkdir) -------------------------------------
+# Verify a recorded pid is ACTUALLY a live run-work.sh (item 3): a bare `kill -0`
+# trusts PID reuse, so after a crash/reboot an unrelated process holding the same
+# pid would make the loop look permanently "running" and block auto-start forever.
+runwork_pid_alive() {
+  local p="$1"
+  [ -n "$p" ] || return 1
+  kill -0 "$p" 2>/dev/null || return 1
+  if [ -r "/proc/$p/cmdline" ]; then
+    tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q 'run-work.sh' || return 1
+  fi
+  return 0
+}
 if ! mkdir "$LOCK" 2>/dev/null; then
-  if [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF" 2>/dev/null)" 2>/dev/null; then
+  if [ -f "$PIDF" ] && runwork_pid_alive "$(cat "$PIDF" 2>/dev/null)"; then
     echo "supervisor already running (pid $(cat "$PIDF")) for $REPO" >&2; exit 3
   fi
+  # Dead/stale owner: atomically reclaim by recreating the lock dir.
   rm -rf "$LOCK" 2>/dev/null; mkdir "$LOCK" 2>/dev/null || { echo "cannot acquire lock" >&2; exit 3; }
 fi
-echo "$$" > "$PIDF"
+# Install the cleanup trap immediately after acquiring the lock and BEFORE writing
+# the pidfile (item 3): if anything below fails, the trap still releases the lock.
 STOP_REASON="ended"
 cleanup() {
   rm -f "$PIDF" 2>/dev/null; rm -rf "$LOCK" 2>/dev/null
   # request-scoped one-shot cleanup: if this run seeded a single tagged request,
   # remove its line so a left-open TASKS.md can't re-arm the loop later (item 6).
   [ -n "${PHALANX_REQ_ID:-}" ] && [ -x "$UNSEED" ] && "$UNSEED" "$REPO" "$PHALANX_REQ_ID" >/dev/null 2>&1 || true
+  # Drain pending-unseed (item 2): unseed every req id another caller (e.g.
+  # bot-handoff while a supervisor was already up) parked here -- those ids would
+  # otherwise never be removed and could re-arm the loop on the next message.
+  if [ -f "$PENDING_UNSEED" ] && [ -x "$UNSEED" ]; then
+    while IFS= read -r rid; do
+      [ -n "$rid" ] && "$UNSEED" "$REPO" "$rid" >/dev/null 2>&1 || true
+    done < "$PENDING_UNSEED"
+    rm -f "$PENDING_UNSEED" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 trap 'STOP_REASON="signalled"; exit 0' INT TERM
+echo "$$" > "$PIDF"
 
 if [ ! -f "$TASKS" ]; then echo "No TASKS.md in $REPO. Create one with '- [ ]' items first." >&2; exit 1; fi
 
 backlog_empty() { [ -f "$TASKS" ] || return 0; ! grep -Eq '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]' "$TASKS"; }
 off()           { [ -f "$REPO/.work-off" ] || [ -f "$CLAUDE_DIR/.work-off" ]; }
-blocked()       { [ -f "$PROGRESS" ] && tail -n 25 "$PROGRESS" | grep -q 'BLOCKED'; }
+# Authoritative halt: the sentinel file wins (item 1). The PROGRESS.md scan is a
+# DETECTOR only -- it scans the WHOLE file (not a tail window, which a verbose pass
+# could push the BLOCKED line out of) and, on first sight, materializes the
+# sentinel so control flow never again depends on tail position.
+blocked() {
+  [ -f "$BLOCKED_FILE" ] && return 0
+  if [ -f "$PROGRESS" ] && grep -q 'BLOCKED' "$PROGRESS"; then
+    { grep -m1 'BLOCKED' "$PROGRESS" 2>/dev/null || echo BLOCKED; } > "$BLOCKED_FILE" 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
 spent_tokens()  { local b; b=$(cat "$RUNDIR"/pass-*.log 2>/dev/null | wc -c); echo $(( b / 4 )); }
 
 note start "supervisor up: $REPO (max=$MAX_PASSES)"
 pass=0; fails=0
 while true; do
   if off;          then echo "Kill switch (.work-off). Stopping."; STOP_REASON="work-off"; break; fi
-  if blocked;      then echo "BLOCKED in PROGRESS.md. Halting for human."; STOP_REASON="blocked"; note blocked "$(tail -n 3 "$PROGRESS" | tr '\n' ' ')"; break; fi
+  if blocked;      then echo "BLOCKED (sentinel). Halting for human."; STOP_REASON="blocked"; note blocked "$(cat "$BLOCKED_FILE" 2>/dev/null | tr '\n' ' ')"; break; fi
   if backlog_empty; then echo "Backlog empty. Done."; STOP_REASON="done"; break; fi
   pass=$((pass + 1))
   if (( pass > MAX_PASSES )); then echo "Hit MaxPasses=$MAX_PASSES. Stopping."; STOP_REASON="maxpasses"; break; fi
@@ -99,13 +141,27 @@ while true; do
   stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo 0)"; log="$RUNDIR/pass-$pass-$stamp.log"
   echo "=== Pass $pass - $(date +%T 2>/dev/null) - fresh /work ==="
   note progress "pass $pass starting"
+  # Wall-clock cap per pass (item 4): a hung `claude -p` must not block the
+  # detached loop forever. `timeout` returns 124 on expiry -- treated as a
+  # RECOVERABLE failure below (count it, notify, relaunch fresh), not a hard stop.
   set +e
-  PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
-    CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" \
-    claude -p "/work" 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
+  if command -v timeout >/dev/null 2>&1; then
+    PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
+      CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" \
+      timeout "${PHALANX_PASS_TIMEOUT:-1800}s" claude -p "/work" 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
+  else
+    PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
+      CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" \
+      claude -p "/work" 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
+  fi
   set -e
 
-  if [ "$code" -ne 0 ]; then
+  if [ "$code" -eq 124 ]; then
+    fails=$((fails + 1))
+    echo "pass $pass timed out after ${PHALANX_PASS_TIMEOUT:-1800}s (consecutive fails: $fails). Relaunching fresh."
+    note progress "pass $pass timed out (${PHALANX_PASS_TIMEOUT:-1800}s); relaunching"
+    if (( fails >= 3 )); then echo "3 consecutive failures. Stopping. See $log." >&2; STOP_REASON="repeated-failure"; note blocked "supervisor stopped: 3 consecutive pass failures (last=timeout)"; break; fi
+  elif [ "$code" -ne 0 ]; then
     fails=$((fails + 1))
     echo "claude exited $code on pass $pass (consecutive fails: $fails). Will relaunch fresh."
     # A killed/crashed pass is RECOVERABLE: the next fresh /work resumes from
