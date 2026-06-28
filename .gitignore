@@ -12,6 +12,9 @@ PROGRESS.md
 .claude-runs/
 .work-off
 .phalanx-repos
+# per-deployment opt-in markers (autorun/automerge/deploy) — NEVER commit: a
+# published marker would make every clone auto-run/merge/deploy.
+.phalanx-*
 
 # per-pass worktrees (Phalanx loop)
 .claude/worktrees/
