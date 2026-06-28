@@ -131,7 +131,7 @@ cp "$CLAUDE_DIR"/lib/*.js "$TG/lib/" 2>/dev/null || true
 for j in pipeline-gate effect-ca-gate secret-gate loop-integrity-gate context-budget work-autostart work-respawn; do
   cp "$CLAUDE_DIR/$j.js" "$TG/" 2>/dev/null || true
 done
-fire() { echo "$2" | PHALANX_WARN= node "$TG/$1"; }
+fire() { echo "$2" | PHALANX_WARN='' node "$TG/$1"; }
 expect_deny() { case "$3" in *'"permissionDecision":"deny"'*) echo "    PASS $1";; *) echo "    FAIL $1 (expected deny) got: $3"; FAIL=1;; esac; }
 expect_allow() { if [ -z "$3" ]; then echo "    PASS $1"; else echo "    FAIL $1 (expected allow/empty) got: $3"; FAIL=1; fi; }
 # Item 3 (gates as teachers): a blocked reason must also carry a concrete "Fix →" recipe.
@@ -209,14 +209,14 @@ echo "==> v1.4 no-babysit sims"
 # can't read a live global switch.
 LIGG="$TG/loop-integrity-gate.js"
 LIGDIR="$HOME/.phalanx-lig-selftest"; rm -rf "$LIGDIR"; mkdir -p "$LIGDIR"
-li() { echo "$1" | PHALANX_WARN= node "$LIGG"; }
+li() { echo "$1" | PHALANX_WARN='' node "$LIGG"; }
 printf '# T\n- [x] done\n' > "$LIGDIR/TASKS.md"
 o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_deny "loop:seed-before-edit" x "$o"; expect_teach "loop:seed-before-edit" x "$o"
 printf '# T\n- [ ] do it\n' > "$LIGDIR/TASKS.md"
 o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_allow "loop:edit-after-seed" x "$o"
 if command -v git >/dev/null 2>&1; then
   ( cd "$LIGDIR" && git init -q && git config user.email a@b.c && git config user.name a && git checkout -q -b task/x && git commit -q --allow-empty -m i )
-  pg() { echo "$1" | PHALANX_WARN= node "$TG/pipeline-gate.js"; }
+  pg() { echo "$1" | PHALANX_WARN='' node "$TG/pipeline-gate.js"; }
   o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2\"}"); expect_deny "loop:commit-before-verify" x "$o"
   # SINGLE WRITER: pipeline-gate records the cross-pass verify flag (repo+branch keyed
   # under .claude-runs/), not loop-integrity. Verify under one session id...
@@ -266,7 +266,7 @@ if command -v git >/dev/null 2>&1; then
   WTR="$HOME/.phalanx-wt-selftest"; rm -rf "$WTR"; mkdir -p "$WTR"
   ( cd "$WTR" && git init -q && git config user.email a@b.c && git config user.name a && git commit -q --allow-empty -m init && git branch -M main && git checkout -q -b task/w && git commit -q --allow-empty -m w && git checkout -q main && git worktree add -q .claude/worktrees/wt task/w ) >/dev/null 2>&1
   WT="$WTR/.claude/worktrees/wt"
-  liw() { echo "$1" | PHALANX_WARN= node "$LIGG"; }
+  liw() { echo "$1" | PHALANX_WARN='' node "$LIGG"; }
   printf '# T\n- [ ] do it\n' > "$WTR/TASKS.md"   # backlog ONLY at the shared root
   o=$(liw "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$WT/src/a.js\"},\"cwd\":\"$WT\",\"session_id\":\"wt1\"}"); expect_allow "worktree:edit-sees-shared-seed" x "$o"
   printf '# T\n- [x] done\n' > "$WTR/TASKS.md"   # empty shared backlog -> 5a fires from worktree
@@ -347,13 +347,16 @@ rm -rf "$WADIR"
 # defaults to the repo basename (so each job lands in its own Telegram topic/chat).
 NDIR="$(mktemp -d)"; NOUT="$NDIR/got"
 printf '#!/usr/bin/env bash\nprintf "%%s|%%s|%%s|%%s\\n" "$1" "$2" "$3" "$4" > "$GOTFILE"\n' > "$NDIR/sink.sh"; chmod +x "$NDIR/sink.sh"
-GOTFILE="$NOUT" PHALANX_NOTIFY_CMD="$NDIR/sink.sh" PHALANX_REPO="/x/my-repo" bash "$CLAUDE_DIR/notify.sh" done "all green" >/dev/null 2>&1
+GOTFILE="$NOUT" PHALANX_NOTIFY_CMD="$NDIR/sink.sh" PHALANX_REPO="/x/my-repo" bash "$CLAUDE_DIR/notify.sh" "done" "all green" >/dev/null 2>&1
 got=$(cat "$NOUT" 2>/dev/null || echo)
 case "$got" in *"|my-repo") echo "    PASS notify:thread-to-adapter";; *) echo "    FAIL notify:thread-to-adapter got: $got"; FAIL=1;; esac
 out=$(PHALANX_REPO="/x/my-repo" bash "$CLAUDE_DIR/notify.sh" info hi 2>/dev/null)
 case "$out" in *my-repo*) echo "    PASS notify:default-thread-is-repo";; *) echo "    FAIL notify:default-thread-is-repo got: $out"; FAIL=1;; esac
 rm -rf "$NDIR"
 
+# Hoist the installed script paths (they use the install's CLAUDE_DIR) so the per-sim
+# env prefix below can set the CHILD's CLAUDE_DIR without shellcheck SC2097/2098.
+RW="$CLAUDE_DIR/run-work.sh"; PW="$CLAUDE_DIR/phalanx-watch.sh"
 # items 1+6 supervisor loop drains a backlog across fresh passes (stub claude),
 # and request-scoped unseed removes a left-open TASKS.md.
 if command -v sed >/dev/null 2>&1; then
@@ -368,7 +371,7 @@ STUB
   # supervisor preflight needs a 0600 headless token; stub answers the auth marker.
   printf 'CLAUDE_CODE_OAUTH_TOKEN=stub\n' > "$SDIR/cd/.headless-env"; chmod 600 "$SDIR/cd/.headless-env"
   printf '# T\n- [ ] a -- ok\n- [ ] b -- ok\n' > "$SDIR/repo/TASKS.md"
-  PATH="$SDIR/bin:$PATH" CLAUDE_DIR="$SDIR/cd" bash "$CLAUDE_DIR/run-work.sh" -r "$SDIR/repo" -m 6 -s 0 >/dev/null 2>&1 || true
+  PATH="$SDIR/bin:$PATH" CLAUDE_DIR="$SDIR/cd" bash "$RW" -r "$SDIR/repo" -m 6 -s 0 >/dev/null 2>&1 || true
   if grep -Eq '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]' "$SDIR/repo/TASKS.md" 2>/dev/null; then echo "    FAIL supervisor:drains-backlog"; FAIL=1; else echo "    PASS supervisor:drains-backlog"; fi
   # request-scoped: a fresh repo whose only task is the seed -> unseed removes the
   # whole file, so a later unrelated message can't re-arm the loop (item 6).
@@ -388,7 +391,7 @@ STUB
   printf 'CLAUDE_CODE_OAUTH_TOKEN=stub\n' > "$NP/cd/.headless-env"; chmod 600 "$NP/cd/.headless-env"
   printf -- '- [ ] stuck\n' > "$NP/repo/TASKS.md"
   PATH="$NP/bin:$PATH" CLAUDE_DIR="$NP/cd" PHALANX_NOPROG_MAX=2 PHALANX_NO_WORKTREE=1 \
-    bash "$CLAUDE_DIR/run-work.sh" -r "$NP/repo" -m 20 -s 0 >/dev/null 2>&1 || true
+    bash "$RW" -r "$NP/repo" -m 20 -s 0 >/dev/null 2>&1 || true
   [ -f "$NP/repo/.claude-runs/BLOCKED" ] && echo "    PASS supervisor:fail-closed-no-progress" || { echo "    FAIL supervisor:fail-closed-no-progress"; FAIL=1; }
   rm -rf "$SDIR"
 else echo "    SKIP supervisor:* (sed not installed)"; fi
@@ -398,7 +401,7 @@ else echo "    SKIP supervisor:* (sed not installed)"; fi
 # Safe: the skip happens before any supervisor launch, so nothing is spawned here.
 WDIR="$(mktemp -d)"; mkdir -p "$WDIR/repo/.claude-runs"; printf -- '- [ ] x\n' > "$WDIR/repo/TASKS.md"
 printf '%s\n' "$WDIR/repo" > "$WDIR/registry"
-o=$(CLAUDE_DIR="$WDIR/cd" bash "$CLAUDE_DIR/phalanx-watch.sh" -f "$WDIR/registry" 2>&1)
+o=$(CLAUDE_DIR="$WDIR/cd" bash "$PW" -f "$WDIR/registry" 2>&1)
 case "$o" in
   *"skip (no .phalanx-autorun"*) case "$o" in *"starting supervisor"*) echo "    FAIL watch:autorun-gate (launched a non-opted repo)"; FAIL=1;; *) echo "    PASS watch:autorun-gate";; esac;;
   *) echo "    FAIL watch:autorun-gate got: $o"; FAIL=1;;
