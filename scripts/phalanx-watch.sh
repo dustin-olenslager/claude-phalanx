@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 SUPERVISORD="$HERE/supervisord.sh"; [ -x "$SUPERVISORD" ] || SUPERVISORD="$CLAUDE_DIR/supervisord.sh"
 REGISTRY="$CLAUDE_DIR/.phalanx-repos"
-while getopts "f:" o; do case "$o" in f) REGISTRY="$OPTARG" ;; esac; done
+while getopts "f:" o; do case "$o" in f) REGISTRY="$OPTARG" ;; *) ;; esac; done
 
 [ -f "$REGISTRY" ] || { echo "no registry at $REGISTRY (one repo path per line). nothing to watch."; exit 0; }
 
@@ -40,6 +40,7 @@ autorun()       { [ -f "$1/.phalanx-autorun" ]; }
 # and spams notifications. It stays skipped until the human clears the block. Uses
 # the SAME detection as run-work.sh via the shared tasks-state.sh reader.
 TS_LIB="$HERE/tasks-state.sh"; [ -f "$TS_LIB" ] || TS_LIB="$CLAUDE_DIR/tasks-state.sh"
+# shellcheck source=/dev/null
 [ -f "$TS_LIB" ] && . "$TS_LIB"
 blocked() { [ -f "$1/.claude-runs/BLOCKED" ] || { declare -F ts_blocked >/dev/null && ts_blocked "$1"; }; }
 

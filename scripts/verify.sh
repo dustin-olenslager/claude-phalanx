@@ -3,7 +3,7 @@
 # Exits non-zero on the first failure. This is the gate-recognized verification.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$HERE"
+cd "$HERE" || exit 1
 fail=0
 echo "== syntax =="
 for s in run-work.sh supervisord.sh phalanx-watch.sh seed-task.sh unseed-task.sh; do

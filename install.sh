@@ -360,10 +360,13 @@ if command -v sed >/dev/null 2>&1; then
   SDIR="$(mktemp -d)"; mkdir -p "$SDIR/repo" "$SDIR/bin" "$SDIR/cd"
   cat > "$SDIR/bin/claude" <<'STUB'
 #!/usr/bin/env bash
+case "$*" in *PHALANX_AUTH_OK*) echo PHALANX_AUTH_OK; exit 0 ;; esac
 t="./TASKS.md"; [ -f "$t" ] && sed -i '0,/- \[ \]/s//- [x]/' "$t" 2>/dev/null || true
 exit 0
 STUB
   chmod +x "$SDIR/bin/claude"
+  # supervisor preflight needs a 0600 headless token; stub answers the auth marker.
+  printf 'CLAUDE_CODE_OAUTH_TOKEN=stub\n' > "$SDIR/cd/.headless-env"; chmod 600 "$SDIR/cd/.headless-env"
   printf '# T\n- [ ] a -- ok\n- [ ] b -- ok\n' > "$SDIR/repo/TASKS.md"
   PATH="$SDIR/bin:$PATH" CLAUDE_DIR="$SDIR/cd" bash "$CLAUDE_DIR/run-work.sh" -r "$SDIR/repo" -m 6 -s 0 >/dev/null 2>&1 || true
   if grep -Eq '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]' "$SDIR/repo/TASKS.md" 2>/dev/null; then echo "    FAIL supervisor:drains-backlog"; FAIL=1; else echo "    PASS supervisor:drains-backlog"; fi
@@ -372,6 +375,21 @@ STUB
   RS="$SDIR/reqscoped"; mkdir -p "$RS"
   id=$(bash "$CLAUDE_DIR/seed-task.sh" "$RS" "one off" | tail -n1); bash "$CLAUDE_DIR/unseed-task.sh" "$RS" "$id"
   [ -f "$RS/TASKS.md" ] && { echo "    FAIL reqscoped:unseed-removes-empty"; FAIL=1; } || echo "    PASS reqscoped:unseed-removes-empty"
+  # anti-churn: a stub that exits 0 but advances NOTHING (like claude -p on a 401) must
+  # FAIL CLOSED -- write the .claude-runs/BLOCKED sentinel the watcher honors -- instead
+  # of churning fresh passes to MaxPasses.
+  NP="$SDIR/noprog"; mkdir -p "$NP/bin" "$NP/repo" "$NP/cd"
+  cat > "$NP/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in *PHALANX_AUTH_OK*) echo PHALANX_AUTH_OK; exit 0 ;; esac
+echo "API Error: 401 (stub: no progress)"; exit 0
+STUB
+  chmod +x "$NP/bin/claude"
+  printf 'CLAUDE_CODE_OAUTH_TOKEN=stub\n' > "$NP/cd/.headless-env"; chmod 600 "$NP/cd/.headless-env"
+  printf -- '- [ ] stuck\n' > "$NP/repo/TASKS.md"
+  PATH="$NP/bin:$PATH" CLAUDE_DIR="$NP/cd" PHALANX_NOPROG_MAX=2 PHALANX_NO_WORKTREE=1 \
+    bash "$CLAUDE_DIR/run-work.sh" -r "$NP/repo" -m 20 -s 0 >/dev/null 2>&1 || true
+  [ -f "$NP/repo/.claude-runs/BLOCKED" ] && echo "    PASS supervisor:fail-closed-no-progress" || { echo "    FAIL supervisor:fail-closed-no-progress"; FAIL=1; }
   rm -rf "$SDIR"
 else echo "    SKIP supervisor:* (sed not installed)"; fi
 

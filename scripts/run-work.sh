@@ -92,6 +92,7 @@ NOTIFY="$HERE/notify.sh"; [ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
 # Single source of truth for TASKS/PROGRESS parsing (mirrors the JS lib tasksState).
 TS_LIB="$HERE/tasks-state.sh"; [ -f "$TS_LIB" ] || TS_LIB="$CLAUDE_DIR/tasks-state.sh"
+# shellcheck source=/dev/null
 . "$TS_LIB" || { echo "FATAL: cannot source $TS_LIB" >&2; exit 1; }
 TASKS="$REPO/TASKS.md"; PROGRESS="$REPO/PROGRESS.md"; LOGDIR="$REPO/.claude-runs"
 PIDF="$LOGDIR/supervisor.pid"; LOCK="$LOGDIR/supervisor.lock"
@@ -187,8 +188,8 @@ fail_closed() {
 progress_fp() {
   # grep -c exits 1 on zero matches; under the loop's set -e + pipefail that would
   # abort the run, so swallow it. Same for a missing PROGRESS.md.
-  local done; done="$(grep -cE '^[[:space:]]*-[[:space:]]*\[[xX]\]' "$TASKS" 2>/dev/null || echo 0)"
-  { printf '%s' "$done"; cat "$PROGRESS" 2>/dev/null || true; } | cksum | awk '{print $1}'
+  local d; d="$(grep -cE '^[[:space:]]*-[[:space:]]*\[[xX]\]' "$TASKS" 2>/dev/null || echo 0)"
+  { printf '%s' "$d"; cat "$PROGRESS" 2>/dev/null || true; } | cksum | awk '{print $1}'
 }
 
 # --- preflight: never spawn a doomed loop ------------------------------------
@@ -288,4 +289,4 @@ while true; do
 done
 
 echo "Loop ended ($STOP_REASON). Passes run: $pass. Logs in $LOGDIR."
-note done "supervisor stopped ($STOP_REASON) after $pass pass(es): $REPO"
+note "done" "supervisor stopped ($STOP_REASON) after $pass pass(es): $REPO"

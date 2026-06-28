@@ -13,7 +13,7 @@ RUNWORK="$HERE/run-work.sh"
 cmd="${1:-}"; shift 2>/dev/null || true
 REPO="$(pwd)"; MAX=""; BUDGET=""
 while getopts "r:m:b:" o; do
-  case "$o" in r) REPO="$OPTARG" ;; m) MAX="$OPTARG" ;; b) BUDGET="$OPTARG" ;; esac
+  case "$o" in r) REPO="$OPTARG" ;; m) MAX="$OPTARG" ;; b) BUDGET="$OPTARG" ;; *) ;; esac
 done
 REPO="$(cd "$REPO" 2>/dev/null && pwd)" || { echo "bad repo path" >&2; exit 1; }
 LOGDIR="$REPO/.claude-runs"; PIDF="$LOGDIR/supervisor.pid"; SUPLOG="$LOGDIR/supervisor.log"
