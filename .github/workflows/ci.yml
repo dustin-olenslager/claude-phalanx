@@ -57,6 +57,7 @@ jobs:
         with:
           scandir: "."
           additional_files: "install.sh uninstall.sh"
+          severity: warning   # match the macos job (-S warning); SC2015/SC2086-style notes are intentional
       - name: shellcheck (macos / BSD env)
         if: runner.os == 'macOS'
         run: |

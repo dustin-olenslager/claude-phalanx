@@ -114,9 +114,16 @@ scripts/supervisord.sh stop   -r <repo>    # or: touch <repo>/.work-off
 
 - **Supervisor** (`run-work.sh`): single-instance per repo (pidfile+lockfile under
   `.claude-runs/`), fresh process per pass (`PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1`),
-  stops on backlog-empty / `BLOCKED` / MaxPasses (default 30) / optional token budget
-  (`-b`). A killed pass is recoverable — the next pass resumes; it gives up only after
-  3 consecutive failures. Every pass is logged under `.claude-runs/`.
+  stops on backlog-empty / `BLOCKED` / MaxPasses (default 30) / token budget (default
+  `PHALANX_TOKEN_BUDGET=1500000`, `-b 0` disables). A killed pass is recoverable — the
+  next pass resumes; it gives up after 3 consecutive failures. **Anti-churn: all stop
+  paths FAIL CLOSED**, writing the `.claude-runs/BLOCKED` sentinel the watcher honors so
+  a doomed loop is never relaunched. Extra breakers: a **no-progress** detector
+  (`PHALANX_NOPROG_MAX=3` exit-0 passes that advance nothing → BLOCKED — necessary
+  because `claude -p` exits 0 even on a 401, so the failure counter can't see auth
+  churn) and an **auth preflight** (missing/expired token → BLOCKED at 0 passes,
+  `PHALANX_AUTH_PREFLIGHT=0` disables). Clear a block: `rm .claude-runs/BLOCKED`. Every
+  pass is logged under `.claude-runs/`.
 - **Auto-start** (`phalanx-watch.sh`): list repo roots in `~/.claude/.phalanx-repos`,
   add a `*/5` cron with `PHALANX_WATCH=1 ./install.sh`, and any repo that gets an open
   `TASKS.md` is picked up and driven with **no session open**.
