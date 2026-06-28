@@ -37,6 +37,7 @@ SECRET_RE='AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Z
 SECRET_ALLOW='process\.env|import\.meta\.env|os\.environ|getenv|Deno\.env|YOUR_|REPLACE|EXAMPLE|placeholder|xxxx|\$\{|noreply'
 
 fail=0
+# shellcheck disable=SC2034  # local_ref/remote_ref are git's stdin fields; kept for documentation
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$Z" ] && continue                       # branch deletion
   if [ "$remote_sha" = "$Z" ]; then

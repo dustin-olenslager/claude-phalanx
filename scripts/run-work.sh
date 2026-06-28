@@ -16,7 +16,14 @@ set -uo pipefail
 # Resolve script dir BEFORE any cd (BASH_SOURCE may be relative).
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-REPO="$(pwd)"; MAX_PASSES=30; SLEEP_SECONDS=3; TOKEN_BUDGET=0
+REPO="$(pwd)"; MAX_PASSES="${PHALANX_MAX_PASSES:-30}"; SLEEP_SECONDS=3
+# Default per-run token ceiling (anti-churn): a pathological run is bounded even
+# without -b. Override with -b / PHALANX_TOKEN_BUDGET; set 0 to disable.
+TOKEN_BUDGET="${PHALANX_TOKEN_BUDGET:-1500000}"
+# Consecutive exit-0 passes that advance NOTHING (no TASKS/PROGRESS change) before
+# failing closed. `claude -p` returns 0 even on a 401, so the failure counter alone
+# can't see a doomed-but-quiet pass -- the no-progress detector is what catches it.
+NOPROG_MAX="${PHALANX_NOPROG_MAX:-3}"
 while getopts "r:m:s:b:" opt; do
   case "$opt" in
     r) REPO="$OPTARG" ;; m) MAX_PASSES="$OPTARG" ;; s) SLEEP_SECONDS="$OPTARG" ;; b) TOKEN_BUDGET="$OPTARG" ;;
@@ -85,6 +92,7 @@ NOTIFY="$HERE/notify.sh"; [ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
 # Single source of truth for TASKS/PROGRESS parsing (mirrors the JS lib tasksState).
 TS_LIB="$HERE/tasks-state.sh"; [ -f "$TS_LIB" ] || TS_LIB="$CLAUDE_DIR/tasks-state.sh"
+# shellcheck source=/dev/null
 . "$TS_LIB" || { echo "FATAL: cannot source $TS_LIB" >&2; exit 1; }
 TASKS="$REPO/TASKS.md"; PROGRESS="$REPO/PROGRESS.md"; LOGDIR="$REPO/.claude-runs"
 PIDF="$LOGDIR/supervisor.pid"; LOCK="$LOGDIR/supervisor.lock"
@@ -163,16 +171,58 @@ blocked() {
 }
 spent_tokens()  { local b; b=$(cat "$RUNDIR"/pass-*.log 2>/dev/null | wc -c); echo $(( b / 4 )); }
 
-note start "supervisor up: $REPO (max=$MAX_PASSES)"
-pass=0; fails=0
+# Fail CLOSED: every non-progress stop path routes here so the watcher (which skips
+# a repo iff .claude-runs/BLOCKED exists) never relaunches a doomed loop. Writes the
+# sentinel + a human-visible PROGRESS line + notifies. A human clears it:
+# rm .claude-runs/BLOCKED (and the PROGRESS BLOCKED line).
+fail_closed() {
+  local reason="$1"
+  mkdir -p "$LOGDIR" 2>/dev/null || true
+  printf 'BLOCKED: %s\n' "$reason" > "$BLOCKED_FILE" 2>/dev/null || true
+  printf '\nBLOCKED: %s\n' "$reason" >> "$PROGRESS" 2>/dev/null || true
+  note blocked "$reason"
+}
+# Fingerprint of REAL progress: completion state of TASKS.md + content of PROGRESS.md.
+# A pass that checks a box OR writes a new checkpoint changes this; a pass that spins
+# (identical output, nothing advanced) does not. Used to catch exit-0 no-progress churn.
+progress_fp() {
+  # grep -c exits 1 on zero matches; under the loop's set -e + pipefail that would
+  # abort the run, so swallow it. Same for a missing PROGRESS.md.
+  local d; d="$(grep -cE '^[[:space:]]*-[[:space:]]*\[[xX]\]' "$TASKS" 2>/dev/null || echo 0)"
+  { printf '%s' "$d"; cat "$PROGRESS" 2>/dev/null || true; } | cksum | awk '{print $1}'
+}
+
+# --- preflight: never spawn a doomed loop ------------------------------------
+# Missing token => every `claude -p` 401s. Fail closed at ZERO passes instead of
+# burning 3 (x every repo, every watcher tick) before the failure counter gives up.
+if [ -z "$OAUTH_TOKEN" ]; then
+  echo "No headless OAuth token ($HEADLESS_ENV). Failing closed." >&2
+  fail_closed "no headless auth token; provision $CLAUDE_DIR/.headless-env (claude setup-token), then rm $BLOCKED_FILE"
+  exit 1
+fi
+# Cheap live auth check: one tiny `claude -p`. Because `claude -p` exits 0 on a 401,
+# detect by the expected marker in OUTPUT, not the exit code. A bad/expired token
+# fails here for ~1 trivial call instead of 3 full passes. Disable: PHALANX_AUTH_PREFLIGHT=0.
+if [ "${PHALANX_AUTH_PREFLIGHT:-1}" = "1" ] && command -v claude >/dev/null 2>&1; then
+  TO=""; command -v timeout >/dev/null 2>&1 && TO="timeout 60s"
+  pf_out="$(CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" $TO claude -p 'reply with exactly: PHALANX_AUTH_OK' 2>&1)"
+  if ! printf '%s' "$pf_out" | grep -q 'PHALANX_AUTH_OK'; then
+    echo "Auth preflight failed (token invalid/expired or claude unreachable). Failing closed." >&2
+    fail_closed "headless auth preflight failed (401/expired?); refresh $CLAUDE_DIR/.headless-env, then rm $BLOCKED_FILE"
+    exit 1
+  fi
+fi
+
+note start "supervisor up: $REPO (max=$MAX_PASSES, budget=$TOKEN_BUDGET)"
+pass=0; fails=0; noprog=0; fp_prev="$(progress_fp)"
 while true; do
   if off;          then echo "Kill switch (.work-off). Stopping."; STOP_REASON="work-off"; break; fi
   if blocked;      then echo "BLOCKED (sentinel). Halting for human."; STOP_REASON="blocked"; note blocked "$(cat "$BLOCKED_FILE" 2>/dev/null | tr '\n' ' ')"; break; fi
   if backlog_empty; then echo "Backlog empty. Done."; STOP_REASON="done"; break; fi
   pass=$((pass + 1))
-  if (( pass > MAX_PASSES )); then echo "Hit MaxPasses=$MAX_PASSES. Stopping."; STOP_REASON="maxpasses"; break; fi
+  if (( pass > MAX_PASSES )); then echo "Hit MaxPasses=$MAX_PASSES. Stopping."; STOP_REASON="maxpasses"; fail_closed "hit MaxPasses=$MAX_PASSES without draining backlog; review then rm $BLOCKED_FILE"; break; fi
   if (( TOKEN_BUDGET > 0 )) && (( $(spent_tokens) > TOKEN_BUDGET )); then
-    echo "Token budget $TOKEN_BUDGET exceeded (~$(spent_tokens)). Stopping."; STOP_REASON="budget"; break; fi
+    echo "Token budget $TOKEN_BUDGET exceeded (~$(spent_tokens)). Stopping."; STOP_REASON="budget"; fail_closed "token budget $TOKEN_BUDGET exceeded (~$(spent_tokens) tokens); review then rm $BLOCKED_FILE"; break; fi
 
   stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo 0)"; log="$RUNDIR/pass-$pass-$stamp.log"
   echo "=== Pass $pass - $(date +%T 2>/dev/null) - fresh /work ==="
@@ -212,18 +262,31 @@ while true; do
     fails=$((fails + 1))
     echo "pass $pass timed out after ${PHALANX_PASS_TIMEOUT:-1800}s (consecutive fails: $fails). Relaunching fresh."
     note progress "pass $pass timed out (${PHALANX_PASS_TIMEOUT:-1800}s); relaunching"
-    if (( fails >= 3 )); then echo "3 consecutive failures. Stopping. See $log." >&2; STOP_REASON="repeated-failure"; note blocked "supervisor stopped: 3 consecutive pass failures (last=timeout)"; break; fi
+    if (( fails >= 3 )); then echo "3 consecutive failures. Stopping. See $log." >&2; STOP_REASON="repeated-failure"; fail_closed "supervisor stopped: 3 consecutive pass failures (last=timeout); fix then rm $BLOCKED_FILE"; break; fi
   elif [ "$code" -ne 0 ]; then
     fails=$((fails + 1))
     echo "claude exited $code on pass $pass (consecutive fails: $fails). Will relaunch fresh."
     # A killed/crashed pass is RECOVERABLE: the next fresh /work resumes from
     # PROGRESS.md. Only give up after several consecutive failures.
-    if (( fails >= 3 )); then echo "3 consecutive failures. Stopping. See $log." >&2; STOP_REASON="repeated-failure"; note blocked "supervisor stopped: 3 consecutive pass failures"; break; fi
+    if (( fails >= 3 )); then echo "3 consecutive failures. Stopping. See $log." >&2; STOP_REASON="repeated-failure"; fail_closed "supervisor stopped: 3 consecutive pass failures (last exit=$code); fix then rm $BLOCKED_FILE"; break; fi
   else
     fails=0
+    # Exit 0 != progress. `claude -p` returns 0 even on a 401 auth failure, so the
+    # failure counter can't see a doomed-but-quiet pass. Compare the progress
+    # fingerprint: N consecutive exit-0 passes that advance NOTHING => fail closed.
+    fp_now="$(progress_fp)"
+    if [ "$fp_now" = "$fp_prev" ]; then
+      noprog=$((noprog + 1))
+      echo "pass $pass made no progress (no TASKS/PROGRESS change; $noprog/$NOPROG_MAX)."
+      note progress "pass $pass: no progress ($noprog/$NOPROG_MAX)"
+      if (( noprog >= NOPROG_MAX )); then STOP_REASON="no-progress"; fail_closed "no progress in $NOPROG_MAX consecutive passes (stuck task, or auth/verify failing silently); investigate then rm $BLOCKED_FILE"; break; fi
+    else
+      noprog=0
+    fi
+    fp_prev="$fp_now"
   fi
   sleep "$SLEEP_SECONDS"
 done
 
 echo "Loop ended ($STOP_REASON). Passes run: $pass. Logs in $LOGDIR."
-note done "supervisor stopped ($STOP_REASON) after $pass pass(es): $REPO"
+note "done" "supervisor stopped ($STOP_REASON) after $pass pass(es): $REPO"
