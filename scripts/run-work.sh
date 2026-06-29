@@ -88,6 +88,29 @@ if [ -f "$LOOP_GIT_ENV" ]; then
       | tail -n1 | sed -E 's/^[[:space:]]*(export[[:space:]]+)?GH_TOKEN=//; s/^["'\'']//; s/["'\'']$//')"
   fi
 fi
+# Generalized loop access: a user wires WHATEVER extra creds their loop needs
+# (CLOUDFLARE_API_TOKEN, FLY_API_TOKEN, registry logins, ssh host vars, ...) into
+# $CLAUDE_DIR/.loop-access.env, 0600, as raw `KEY=value` lines (no quotes, `export`
+# optional, `#` comments ok). Same safety model as the two tokens above: each var is
+# passed SOLELY on the `claude` invocation env below, never `. source`d into the
+# supervisor's own long-lived env. The pass's agent + its worker bash see them (so it
+# can deploy/auth); the supervisor process does not. MCP servers, browser/e2e, skills,
+# and ssh are already inherited from the same ~/.claude -- this file is only for SECRETS.
+ACCESS_KV=()
+LOOP_ACCESS_ENV="$CLAUDE_DIR/.loop-access.env"
+if [ -f "$LOOP_ACCESS_ENV" ]; then
+  aperms="$(stat -c '%a' "$LOOP_ACCESS_ENV" 2>/dev/null || stat -f '%Lp' "$LOOP_ACCESS_ENV" 2>/dev/null || echo '')"
+  if [ -n "$aperms" ] && [ "${aperms: -2}" != "00" ]; then
+    echo "WARN: $LOOP_ACCESS_ENV is group/other-readable (mode $aperms); skipping. chmod 600 it." >&2
+  else
+    while IFS= read -r line; do
+      line="${line#"${line%%[![:space:]]*}"}"   # ltrim
+      case "$line" in ''|'#'*) continue;; esac
+      line="${line#export }"
+      case "$line" in *=*) ACCESS_KV+=("$line");; esac
+    done < "$LOOP_ACCESS_ENV"
+  fi
+fi
 NOTIFY="$HERE/notify.sh"; [ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
 # Single source of truth for TASKS/PROGRESS parsing (mirrors the JS lib tasksState).
@@ -251,10 +274,12 @@ while true; do
   if command -v timeout >/dev/null 2>&1; then
     PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
       CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" GH_TOKEN="$GH_TOKEN_VAL" \
+      env ${ACCESS_KV[@]+"${ACCESS_KV[@]}"} \
       timeout "${PHALANX_PASS_TIMEOUT:-1800}s" claude -p "/work" $WT_FLAGS 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
   else
     PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
       CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" GH_TOKEN="$GH_TOKEN_VAL" \
+      env ${ACCESS_KV[@]+"${ACCESS_KV[@]}"} \
       claude -p "/work" $WT_FLAGS 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
   fi
   set -e

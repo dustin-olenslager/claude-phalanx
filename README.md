@@ -167,6 +167,27 @@ tag-push creds. Keep the tag pattern in the per-repo deploy script.
 **Push creds:** a scoped `GH_TOKEN` in `~/.claude/.loop-git-env` (mode 0600, injected
 only on the `claude` exec env), or a credential helper the loop user can read.
 
+## Wiring access into your loop
+
+The loop's `claude -p` passes run as **you**, with **your** `~/.claude` — so every MCP
+server (browser, e2e, Chrome), every skill, and your `ssh`/`git` config are **already
+inherited**. There is nothing to wire for tools.
+
+The one thing not auto-inherited is **extra secrets**. Drop any `KEY=value` your loop
+needs into `~/.claude/.loop-access.env` (mode 0600) and the supervisor injects each onto
+the `claude` exec env — the pass's agent and its worker bash see them (to deploy, auth a
+registry, hit an API); the supervisor and unrelated children never do. Same isolation
+model as the two token files.
+
+```sh
+cp ~/.claude/.loop-access.env.example ~/.claude/.loop-access.env
+chmod 600 ~/.claude/.loop-access.env
+printf 'CLOUDFLARE_API_TOKEN=cf_xxx\n' >> ~/.claude/.loop-access.env
+```
+
+Raw `KEY=value`, one per line, no quotes, `#` comments ok. `GH_TOKEN` and
+`CLAUDE_CODE_OAUTH_TOKEN` keep their dedicated files — don't duplicate them here.
+
 ## Worktree isolation
 
 Each autonomous pass runs in its own git worktree (`claude --worktree`, under

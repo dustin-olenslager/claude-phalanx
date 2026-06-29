@@ -72,10 +72,16 @@ fi
 
 # Headless OAuth token file must never be group/other-readable -- run-work.sh
 # refuses to read it otherwise. Tighten perms if the operator has created it.
-if [ -f "$CLAUDE_DIR/.headless-env" ]; then
-  chmod 600 "$CLAUDE_DIR/.headless-env" 2>/dev/null || true
-  echo "==> chmod 600 $CLAUDE_DIR/.headless-env"
-fi
+# Loop credential files must never be group/other-readable -- run-work.sh refuses to
+# read them otherwise. Tighten perms on any the operator has created.
+for sec in .headless-env .loop-git-env .loop-access.env; do
+  if [ -f "$CLAUDE_DIR/$sec" ]; then
+    chmod 600 "$CLAUDE_DIR/$sec" 2>/dev/null || true
+    echo "==> chmod 600 $CLAUDE_DIR/$sec"
+  fi
+done
+# Ship the access template as a reference (never clobber a real .loop-access.env).
+cp "$HERE/.loop-access.env.example" "$CLAUDE_DIR/.loop-access.env.example" 2>/dev/null || true
 
 echo "==> memory dir"
 MEMORY_DIR="${MEMORY_DIR:-$CLAUDE_DIR/memory}"
