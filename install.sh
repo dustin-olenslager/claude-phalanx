@@ -219,7 +219,8 @@ LIGDIR="$HOME/.phalanx-lig-selftest"; rm -rf "$LIGDIR"; mkdir -p "$LIGDIR"
 # when install.sh runs inside a surrounding git tree, the gate's repoRoot() (git
 # rev-parse) climbs OUT of a non-repo fixture into the host repo and reads the wrong
 # TASKS.md -> wrong verdict / empty output. GIT_CEILING_DIRECTORIES halts the climb.
-export GIT_CEILING_DIRECTORIES="$(dirname "$LIGDIR")"
+# ponytail: split declare+assign (SC2155 — masking $() exit under `set -e` isn't wanted here).
+GIT_CEILING_DIRECTORIES="$(dirname "$LIGDIR")"; export GIT_CEILING_DIRECTORIES
 command -v git >/dev/null 2>&1 && git -C "$LIGDIR" init -q
 li() { echo "$1" | PHALANX_WARN='' node "$LIGG"; }
 printf '# T\n- [x] done\n' > "$LIGDIR/TASKS.md"
@@ -284,7 +285,7 @@ if command -v git >/dev/null 2>&1; then
   # HERMETIC (same reason as the LIG block): halt git's repo discovery at the fixture's
   # parent so repoRoot() can't climb into a surrounding host repo when install.sh runs
   # inside one.
-  export GIT_CEILING_DIRECTORIES="$(dirname "$WTR")"
+  GIT_CEILING_DIRECTORIES="$(dirname "$WTR")"; export GIT_CEILING_DIRECTORIES
   ( cd "$WTR" && git init -q && git config user.email a@b.c && git config user.name a && git commit -q --allow-empty -m init && git branch -M main && git checkout -q -b task/w && git commit -q --allow-empty -m w && git checkout -q main && git worktree add -q .claude/worktrees/wt task/w ) >/dev/null 2>&1
   WT="$WTR/.claude/worktrees/wt"
   # precondition: a gate run from the linked worktree must resolve STATE to the shared root.
