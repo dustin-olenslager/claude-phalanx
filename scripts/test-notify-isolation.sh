@@ -33,4 +33,20 @@ rm -f "$SENTINEL"
 PHALANX_NOTIFY_CMD="$STUB" PHALANX_REPO="$REALREPO" bash "$NOTIFY" start "hello" >/dev/null 2>&1
 if [ -e "$SENTINEL" ]; then echo "  ok case2 sink fired"; else echo "  FAIL case2: sink did not fire for non-/tmp repo"; FAIL=1; fi
 
+# Case 3: TMPDIR with a TRAILING SLASH still suppresses a repo under it (the trailing
+# slash used to make the TMPDIR arm silently dead). Use a custom TMPDIR off /tmp so this
+# exercises the TMPDIR arm, not the /tmp arm.
+CT="$WORK/customtmp"; mkdir -p "$CT/r"
+rm -f "$SENTINEL"
+PHALANX_NOTIFY_CMD="$STUB" PHALANX_REPO="$CT/r" TMPDIR="$CT/" bash "$NOTIFY" start "hello" >/dev/null 2>&1
+if [ -e "$SENTINEL" ]; then echo "  FAIL case3: sink fired for repo under (trailing-slash) TMPDIR"; FAIL=1; else echo "  ok case3 trailing-slash TMPDIR suppressed"; fi
+
+# Case 4: a SYMLINK whose target is under /tmp must be resolved (pwd -P) and suppressed,
+# so a fixture can't bypass the guard with an indirect path.
+LN="$WORK/link-to-tmp"; TGT="$(mktemp -d -p /tmp .notify-test.XXXXXX)"; ln -s "$TGT" "$LN"
+rm -f "$SENTINEL"
+PHALANX_NOTIFY_CMD="$STUB" PHALANX_REPO="$LN" bash "$NOTIFY" start "hello" >/dev/null 2>&1
+if [ -e "$SENTINEL" ]; then echo "  FAIL case4: sink fired for symlink->/tmp repo"; FAIL=1; else echo "  ok case4 symlink->/tmp suppressed"; fi
+rm -rf "$TGT"
+
 [ "$FAIL" = 0 ] && echo "test-notify-isolation: PASS" || { echo "test-notify-isolation: FAIL"; exit 1; }
