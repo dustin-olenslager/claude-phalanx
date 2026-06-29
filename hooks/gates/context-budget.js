@@ -18,13 +18,20 @@ const fs = require("fs");
 const path = require("path");
 const H = require("./lib/phalanx-hook.js");
 
-// Model context window in tokens. Override per-model via PHALANX_CTX_WINDOW; default
-// ~1M (Opus 4.x). Bad/empty/non-positive env -> the safe default.
-function ctxWindow() {
-  const n = parseInt(process.env.PHALANX_CTX_WINDOW || "", 10);
-  return Number.isFinite(n) && n > 0 ? n : 1000000;
+// Context window in tokens, SENSED from the model on the last assistant turn (read from
+// the transcript) -- the operator runs different models with different windows, so a fixed
+// default is wrong. PHALANX_CTX_WINDOW overrides explicitly. Unknown model -> the standard
+// 200k Claude window: a too-SMALL guess only makes the ceiling fire earlier (safe); a
+// too-LARGE guess lets a run blow past the real limit and degrade (the bug being fixed).
+function windowForModel(model) {
+  const env = parseInt(process.env.PHALANX_CTX_WINDOW || "", 10);
+  if (Number.isFinite(env) && env > 0) return env;          // explicit override wins
+  const m = String(model || "").toLowerCase();
+  if (!m) return 200000;
+  if (/1m|context-1m|\[1m\]/.test(m)) return 1000000;       // explicit 1M-context variant
+  // extend here for any model whose real window != 200k (keyed on the model id substring)
+  return 200000;                                            // standard Claude window
 }
-const WINDOW_TOKENS = ctxWindow();
 const CEILING = 0.45;         // never exceed 45%
 const WARN = 0.38;            // early nudge to start wrapping the current unit
 const ONESHOT = process.env.PHALANX_ONESHOT === "1";
@@ -40,7 +47,7 @@ const supervisorActive = H.supervisorActive;
 // the gauge shows. Read a bounded tail (trailing tool_result lines can be large) and
 // scan complete lines backward for the first message.usage. null when none found.
 // ponytail: 1MB tail, not a full-file parse; null when no usage line is in the tail.
-function lastUsageTokens(tp, size) {
+function lastUsage(tp, size) {
   try {
     const span = Math.min(size, 1024 * 1024);
     if (span <= 0) return null;
@@ -56,7 +63,7 @@ function lastUsageTokens(tp, size) {
       const u = rec && rec.message && rec.message.usage;
       if (u) {
         const t = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-        if (t > 0) return t;
+        if (t > 0) return { tokens: t, model: (rec.message.model || "") };
       }
     }
   } catch {}
@@ -77,8 +84,10 @@ try { bytes = fs.statSync(tp).size; } catch { emit(""); }
 
 // Real usage signal only. No usage line yet (very early in a session) -> skip the
 // nudge this turn rather than guess from raw bytes.
-const real = lastUsageTokens(tp, bytes);
-if (real == null) emit("");
+const usage = lastUsage(tp, bytes);
+if (usage == null) emit("");
+const real = usage.tokens;
+const WINDOW_TOKENS = windowForModel(usage.model);  // sensed from the model on this turn
 const frac = real / WINDOW_TOKENS;
 
 if (frac < WARN) emit(""); // healthy, say nothing
@@ -125,4 +134,4 @@ if (frac >= CEILING) {
   emit(`CONTEXT CEILING HIT (~${pct}% >= 45%). Flush remaining task state to PROGRESS.md NOW, then STOP this session. Run /work in a fresh session to resume -- it reads PROGRESS.md first.`);
 }
 
-emit(`Context ~${pct}% (ceiling 45%). Finish the current unit, then checkpoint to PROGRESS.md before starting another. Prefer dispatching a subagent over reading files yourself.`);
+emit(`Context ~${pct}% — UNDER the 45% ceiling, headroom remains. KEEP WORKING: do NOT stop, and do NOT checkpoint-and-halt here. This is only a heads-up — wrap the CURRENT unit before opening a big NEW one, and prefer dispatching subagents over reading files yourself. ONLY a "CONTEXT CEILING HIT (>=45%)" message means stop; a WARN like this never does.`);
