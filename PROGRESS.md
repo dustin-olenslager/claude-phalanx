@@ -60,3 +60,27 @@ Shipped PR #15 (task/rule-5e). Implements:
 - Rule 5e in loop-integrity-gate.js: loop agents blocked from raw push to main without .phalanx-automerge.
 - stripQuotedContent() in lib/phalanx-hook.js: strips heredoc/quoted content before PUSH_MAIN test (fixes 5c false-positive on checkpoint writes).
 Verify: node --check OK + install.sh 0 new failures. Generalized loop access (7486d10) checked off as already shipped. Backlog empty.
+
+## 2026-06-29 ADDENDUM — Herald stray-topic cleanup (fold into same task)
+Operator chose: add a Herald script call to delete the stray "repo" forum topic(s) created by the flood.
+Herald lives at /workspace/_eval/herald (container `herald`). NOT yet pinned this session:
+  - bot token + supergroup chat_id: `docker exec herald env` returned empty for me; check
+    /workspace/_eval/herald/.env (real, not .env.example) OR the container's compose env_file on HIVE.
+  - topic->message_thread_id map: Herald keeps a thread registry (thread name "repo" -> topic id).
+    Find it in herald src/data (look for forum_topic / message_thread_id / a topics json|sqlite).
+CLEANUP STEP (after notify.sh fix, same branch/task): one-shot script (scripts/ or ad-hoc) that calls
+  Telegram Bot API deleteForumTopic {chat_id, message_thread_id} for each stray "repo" topic.
+  Verify: API returns ok:true; topic gone in Telegram. Token/chat_id from Herald env — do NOT hardcode/commit.
+ORDER on resume: notify.sh /tmp guard + test + verify green -> hot-patch live copies (stops flood) ->
+  pin Herald token+chat_id+topic-ids -> delete stray topics -> commit -> rm .work-off -> ask before push.
+
+## 2026-06-29 RESOLVED — notify /tmp isolation (task/notify-tmp-isolation)
+ROOT CAUSE beyond the /tmp guard: scripts/notify.sh was NOT executable. run-work.sh:114
+`[ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"` silently FELL BACK to the global copy,
+so the in-repo /tmp guard would never have run for the supervisor. Fix = chmod +x (git mode 100755)
++ the case-guard (lines 46-48) + scripts/test-notify-isolation.sh (2 cases: /tmp suppresses sink but
+still logs; non-/tmp fires sink), auto-globbed by verify.sh. `bash scripts/verify.sh` = all green.
+DEFERRED (separate ops, not in this PR): hot-patch live deployed copies; Herald stray-topic delete
+(needs Herald bot token + chat_id, external destructive Telegram API call — operator-gated).
+
+<!-- RESPAWN 2026-06-29T18:49:45.207Z ctx~47% -- checkpoint state above, STOP, resume fresh -->
