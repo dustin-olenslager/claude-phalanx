@@ -29,6 +29,10 @@ function windowForModel(model) {
   const m = String(model || "").toLowerCase();
   if (!m) return 200000;
   if (/1m|context-1m|\[1m\]/.test(m)) return 1000000;       // explicit 1M-context variant
+  // Opus 4.x ships a 1M window (id carries no "1m" marker, e.g. claude-opus-4-8), so the
+  // 200k default over-reads ~5x -> false ceiling WARNs in interactive sessions. Anyone
+  // running Opus at 200k overrides via PHALANX_CTX_WINDOW.
+  if (/opus-4/.test(m)) return 1000000;
   // extend here for any model whose real window != 200k (keyed on the model id substring)
   return 200000;                                            // standard Claude window
 }
