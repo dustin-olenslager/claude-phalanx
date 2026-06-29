@@ -60,7 +60,24 @@ const VERIFY_CMD = H.VERIFY_CMD;
 if (tool === "Bash") {
   const cmd = (ti.command || "") + "";
 
-  // (c) merge-on-green into main -- the highest-stakes power (autonomous prod authority).
+  // (e) loop-agent push-to-main opt-in: a loop agent (supervisor or one-shot) raw-pushing
+  // main without a .phalanx-automerge opt-in is just as unreviewed as a merge. Non-bypassable.
+  // A merge (GIT_MERGE) goes through rule 5c and is already opt-in gated; skip if merge present.
+  // We strip quoted/heredoc content first so checkpoint writes ('git push origin main' in prose)
+  // do not false-fire -- only real shell-level git push commands are caught.
+  var loopAgent = process.env.PHALANX_SUPERVISOR === "1" || process.env.PHALANX_ONESHOT === "1";
+  if (loopAgent && !H.GIT_MERGE.test(cmd) && H.PUSH_MAIN.test(H.stripQuotedContent(cmd))) {
+    var pushTgt = (function() {
+      var m = /git\s+-C\s+(\S+)/.exec(cmd);
+      return m ? m[1].replace(/^['"]|['"]$/g, "") : cwd;
+    }());
+    if (!H.autoMergeEnabled(pushTgt)) {
+      var pushRoot = H.repoRoot(pushTgt);
+      return out("deny", "Loop-integrity gate (item 5e): loop agent push to main blocked -- autonomous push is NOT enabled for " + pushRoot + ". Fix → open a PR instead (`gh pr create`). To authorize autonomous push for this repo, the operator creates the marker: `touch " + pushRoot + "/.phalanx-automerge` (default OFF; non-bypassable).");
+    }
+  }
+
+    // (c) merge-on-green into main -- the highest-stakes power (autonomous prod authority).
   // Fires only when the merge TARGET is clearly main (already on main, or a checkout/
   // switch main in the same command). Two HARD requirements, BOTH non-bypassable -- this
   // deny IGNORES PHALANX_WARN (unlike 5a/5b), so neither the bot nor a muted pipeline can
