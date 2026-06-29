@@ -409,6 +409,20 @@ STUB
   PATH="$NP/bin:$PATH" CLAUDE_DIR="$NP/cd" PHALANX_NOPROG_MAX=2 PHALANX_NO_WORKTREE=1 \
     bash "$RW" -r "$NP/repo" -m 20 -s 0 >/dev/null 2>&1 || true
   [ -f "$NP/repo/.claude-runs/BLOCKED" ] && echo "    PASS supervisor:fail-closed-no-progress" || { echo "    FAIL supervisor:fail-closed-no-progress"; FAIL=1; }
+  # single-instance: two supervisors on the SAME repo -> exactly one runs, the other bails
+  # (flock). Guards the N-concurrent-supervisor churn. Stub claude sleeps so holder #1 stays
+  # alive while #2 tries to acquire.
+  if command -v flock >/dev/null 2>&1; then
+    CC="$SDIR/concur"; mkdir -p "$CC/bin" "$CC/repo" "$CC/cd"
+    printf '#!/usr/bin/env bash\ncase "$*" in *PHALANX_AUTH_OK*) echo PHALANX_AUTH_OK; exit 0 ;; esac\nsleep 3; exit 0\n' > "$CC/bin/claude"; chmod +x "$CC/bin/claude"
+    printf 'CLAUDE_CODE_OAUTH_TOKEN=stub\n' > "$CC/cd/.headless-env"; chmod 600 "$CC/cd/.headless-env"
+    printf -- '- [ ] x\n' > "$CC/repo/TASKS.md"
+    ( PATH="$CC/bin:$PATH" CLAUDE_DIR="$CC/cd" PHALANX_NO_WORKTREE=1 bash "$RW" -r "$CC/repo" -m 1 -s 0 >/dev/null 2>&1 ) &
+    sleep 1   # let holder #1 grab the flock
+    second=$(PATH="$CC/bin:$PATH" CLAUDE_DIR="$CC/cd" PHALANX_NO_WORKTREE=1 bash "$RW" -r "$CC/repo" -m 1 -s 0 2>&1 || true)
+    case "$second" in *"already running"*) echo "    PASS supervisor:single-instance-flock";; *) echo "    FAIL supervisor:single-instance-flock (2nd did not bail: $second)"; FAIL=1;; esac
+    wait 2>/dev/null || true
+  else echo "    SKIP supervisor:single-instance-flock (no flock)"; fi
   rm -rf "$SDIR"
 else echo "    SKIP supervisor:* (sed not installed)"; fi
 
