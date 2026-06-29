@@ -29,6 +29,12 @@ function windowForModel(model) {
   const m = String(model || "").toLowerCase();
   if (!m) return 200000;
   if (/1m|context-1m|\[1m\]/.test(m)) return 1000000;       // explicit 1M-context variant
+  // Opus 4.x CAN run a 1M window, but only behind the context-1m beta; the id carries no
+  // "1m" marker so we can't sense it. Defaulting opus-4 -> 1M would UNDER-read 5x for every
+  // user on the standard 200k window and never trip the ceiling (the exact failure this
+  // file warns against). So it's OPT-IN: a deployment that enabled the 1M beta sets
+  // PHALANX_OPUS_1M=1 in its session/hook env. Default stays the safe 200k.
+  if (process.env.PHALANX_OPUS_1M === "1" && /opus-4/.test(m)) return 1000000;
   // extend here for any model whose real window != 200k (keyed on the model id substring)
   return 200000;                                            // standard Claude window
 }
