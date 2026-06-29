@@ -309,12 +309,22 @@ S1="$CBDIR/s1m.jsonl"; cbusage 2 150000 "claude-test-context-1m" > "$S1"
 o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S1" "$CBDIR" | node "$CBJ")
 [ -z "$o" ] && echo "    PASS cb:senses-1m-model" || { echo "    FAIL cb:senses-1m-model got: $o"; FAIL=1; }
 
-# OPUS-4 1M WINDOW (the false-ceiling fix): claude-opus-4-* carries NO "1m" marker but runs a
-# 1M window. 150k real -> 15% -> SILENT. Before the fix it defaulted to 200k -> 75% -> false CEILING.
-rm -f "$CBDIR/PROGRESS.md"
+# OPUS-4 1M WINDOW is OPT-IN (PHALANX_OPUS_1M=1), NOT a default. claude-opus-4-* carries no
+# "1m" marker and DEFAULTS to the standard 200k window -- guessing 1M would under-read 5x for
+# every non-beta user and never trip the ceiling. Three cases prove the policy:
 S4="$CBDIR/sopus4.jsonl"; cbusage 2 150000 "claude-opus-4-8" > "$S4"
+# (a) default (no opt-in): 150k under opus-4 -> 75% of 200k -> CEILING (safe default).
+rm -f "$CBDIR/PROGRESS.md"
 o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S4" "$CBDIR" | node "$CBJ")
-[ -z "$o" ] && echo "    PASS cb:senses-opus4-1m" || { echo "    FAIL cb:senses-opus4-1m got: $o"; FAIL=1; }
+case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:opus4-default-200k";; *) echo "    FAIL cb:opus4-default-200k got: $o"; FAIL=1;; esac
+# (b) opt-in ON: PHALANX_OPUS_1M=1 -> 150k under opus-4 -> 15% of 1M -> SILENT.
+rm -f "$CBDIR/PROGRESS.md"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S4" "$CBDIR" | PHALANX_OPUS_1M=1 node "$CBJ")
+[ -z "$o" ] && echo "    PASS cb:opus4-optin-1m" || { echo "    FAIL cb:opus4-optin-1m got: $o"; FAIL=1; }
+# (c) env override still wins over opt-in: force 200k -> CEILING even with opt-in set.
+rm -f "$CBDIR/PROGRESS.md"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S4" "$CBDIR" | PHALANX_OPUS_1M=1 PHALANX_CTX_WINDOW=200000 node "$CBJ")
+case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:opus4-ctxwindow-overrides-optin";; *) echo "    FAIL cb:opus4-ctxwindow-overrides-optin got: $o"; FAIL=1;; esac
 
 # real high usage (~50% of 1M) trips. supervisor active -> defer msg, never "/clear".
 BIGTP="$CBDIR/t.jsonl"; { head -c 40000 /dev/zero | tr '\0' x; printf '\n'; cbusage 2 500000; } > "$BIGTP"
