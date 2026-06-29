@@ -296,10 +296,12 @@ rm -f "$CBDIR/PROGRESS.md"
 o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$BIGTP" "$CBDIR" | PHALANX_SUPERVISOR=1 node "$CBJ")
 case "$o" in *"supervisor will relaunch"*) case "$o" in *"/clear"*) echo "    FAIL cb:sup-defers (mentions /clear)"; FAIL=1;; *) echo "    PASS cb:sup-defers";; esac;; *) echo "    FAIL cb:sup-defers got: $o"; FAIL=1;; esac
 
-# one-shot, no supervisor -> NEVER writes a RESPAWN file.
+# one-shot, no supervisor -> NEVER writes a RESPAWN file, BUT signals <<CONTINUE>> so a
+# host (e.g. the Telegram bot) can hand the repo to a detached supervisor on ceiling.
 rm -f "$CBDIR/PROGRESS.md"
-printf '{"transcript_path":"%s","cwd":"%s"}' "$BIGTP" "$CBDIR" | PHALANX_ONESHOT=1 node "$CBJ" >/dev/null
+oo=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$BIGTP" "$CBDIR" | PHALANX_ONESHOT=1 node "$CBJ")
 [ -f "$CBDIR/PROGRESS.md" ] && { echo "    FAIL cb:oneshot-no-respawn (wrote RESPAWN)"; FAIL=1; } || echo "    PASS cb:oneshot-no-respawn"
+case "$oo" in *"<<CONTINUE>>"*) echo "    PASS cb:oneshot-signals-continue";; *) echo "    FAIL cb:oneshot-signals-continue (no <<CONTINUE>> on ceiling)"; FAIL=1;; esac
 
 # env-derived window: the SAME normal transcript trips once the window is tiny (200k).
 rm -f "$CBDIR/PROGRESS.md"

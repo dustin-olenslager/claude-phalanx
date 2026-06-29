@@ -109,7 +109,13 @@ if (frac >= CEILING) {
     emit(`CONTEXT CEILING HIT (~${pct}% >= 45%). Checkpoint remaining task state to PROGRESS.md NOW and STOP this pass -- the supervisor will relaunch a fresh pass that resumes from PROGRESS.md. No human action needed; do not tell anyone to reset context manually.`);
   }
   if (ONESHOT) {
-    emit(`CONTEXT CEILING HIT (~${pct}% >= 45%) on a one-shot run with no supervisor. Wrap up the current task and report now; do not start more work. (No RESPAWN written -- no resumer in one-shot mode.)`);
+    // A one-shot HOST (e.g. the Telegram bot) can still resume: it watches the agent's
+    // final reply for the <<CONTINUE>> marker and hands the repo to a detached supervisor
+    // that drives it to done/blocked across fresh passes (resuming from PROGRESS.md). So
+    // do NOT dead-end the work -- checkpoint and signal continuation. (Still no RESPAWN
+    // marker here: the supervisor resumes from the checkpoint content, and a bare one-shot
+    // with no host that understands <<CONTINUE>> simply ends, same as before.)
+    emit(`CONTEXT CEILING HIT (~${pct}% >= 45%) on a one-shot run. Checkpoint your remaining task state to PROGRESS.md NOW (enough for a fresh session to resume), do NOT start more work, and END your reply with the marker <<CONTINUE>> on its own line so the host hands the repo to a detached supervisor that finishes it across fresh passes.`);
   }
   // Bare interactive session: nudge to /clear ONCE (gated above); after that just
   // give the terse occupancy line so the instruction doesn't repeat every turn.
