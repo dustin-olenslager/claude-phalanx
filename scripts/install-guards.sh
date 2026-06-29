@@ -62,4 +62,32 @@ EOF
 else
   echo "==> denylist present: $LW"
 fi
+
+# Multi-public-repo guard (besides claude-phalanx): list other PUBLIC remotes that
+# should get the gitleaks + universal-personal guard, and the universal term list.
+PR="$CLAUDE_DIR/.phalanx-public-remotes"
+if [ ! -f "$PR" ]; then
+  cat > "$PR" <<'EOF'
+# Other PUBLIC repos (besides claude-phalanx) the pre-push guard should protect.
+# One remote-URL substring per line (e.g. a slug like owner/my-public-repo).
+# These get gitleaks + the UNIVERSAL list below -- NOT the full project denylist,
+# so a public repo about your own project won't be blocked by its own name.
+EOF
+  echo "==> created public-remotes stub $PR"
+else
+  echo "==> public-remotes present: $PR"
+fi
+LWP="$CLAUDE_DIR/.phalanx-leakwords-public"
+if [ ! -f "$LWP" ]; then
+  cat > "$LWP" <<'EOF'
+# Universal leak terms for ANY public repo -- LOCAL ONLY, never committed. gitleaks
+# already catches generic keys; put here the SPECIFIC operator identifiers that are
+# never legitimate in a public repo: your real email, home/server IPs, API-key
+# prefixes, infra hostnames and absolute paths. Use specific strings (not common
+# words like a short hostname that would match unrelated code).
+EOF
+  echo "==> created universal-leakwords stub $LWP"
+else
+  echo "==> universal-leakwords present: $LWP"
+fi
 echo "==> leak guard installed. Test: scripts/leak-scan.sh --personal"
