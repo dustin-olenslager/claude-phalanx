@@ -45,7 +45,7 @@ Full autonomy granted: commit (caveman-commit), push branches, open PRs. Still b
 The point of the loop is finishing — tested work lands and ships. After a task is committed on `task/<slug>` AND a verify ran GREEN this pass:
 
 1. **Merge — only if the repo opted in.** Look for `.phalanx-automerge` at the repo root.
-   - **Absent (default):** push the branch and `gh pr create` (PR body = units + the green check). Stop there — a human merges. This is the old behavior.
+   - **Absent (default):** push the branch and `gh pr create` (PR body = units + the green check), THEN **check the task off in TASKS.md** with the PR link — e.g. `- [x] <task> — shipped PR #N, awaiting human merge`. The autonomous work is DONE; merging is the human's action. Do NOT leave the task `- [ ]`: a still-open already-shipped task makes the next pass re-pick it, make no progress, and trip the no-progress breaker with a misleading `BLOCKED: no progress`. After checking off, continue to the next task (none left → backlog empty → stop cleanly).
    - **Present:** merge on green. Canonical command (the loop-integrity gate parses this exact shape):
      ```
      git checkout main && git merge --no-ff task/<slug> && git push origin main
