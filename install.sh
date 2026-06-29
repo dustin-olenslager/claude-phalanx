@@ -215,8 +215,19 @@ echo "==> v1.4 no-babysit sims"
 # can't read a live global switch.
 LIGG="$TG/loop-integrity-gate.js"
 LIGDIR="$HOME/.phalanx-lig-selftest"; rm -rf "$LIGDIR"; mkdir -p "$LIGDIR"
+# HERMETIC: the fixture must be its OWN repo and git must STOP at it. Without this,
+# when install.sh runs inside a surrounding git tree, the gate's repoRoot() (git
+# rev-parse) climbs OUT of a non-repo fixture into the host repo and reads the wrong
+# TASKS.md -> wrong verdict / empty output. GIT_CEILING_DIRECTORIES halts the climb.
+export GIT_CEILING_DIRECTORIES="$(dirname "$LIGDIR")"
+command -v git >/dev/null 2>&1 && git -C "$LIGDIR" init -q
 li() { echo "$1" | PHALANX_WARN='' node "$LIGG"; }
 printf '# T\n- [x] done\n' > "$LIGDIR/TASKS.md"
+# precondition: the fixture resolves to ITSELF, not the host repo (catches a future climb-out).
+if command -v git >/dev/null 2>&1; then
+  tl=$(git -C "$LIGDIR" rev-parse --show-toplevel 2>/dev/null)
+  [ "$tl" = "$LIGDIR" ] && echo "    PASS loop:fixture-hermetic" || { echo "    FAIL loop:fixture-hermetic (toplevel='$tl' != '$LIGDIR')"; FAIL=1; }
+fi
 o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_deny "loop:seed-before-edit" x "$o"; expect_teach "loop:seed-before-edit" x "$o"
 printf '# T\n- [ ] do it\n' > "$LIGDIR/TASKS.md"
 o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_allow "loop:edit-after-seed" x "$o"
@@ -270,8 +281,15 @@ rm -rf "$LIGDIR"
 # is still gated. Outside /tmp so metaRe's ^/tmp/ exclusion doesn't mask edit gating.
 if command -v git >/dev/null 2>&1; then
   WTR="$HOME/.phalanx-wt-selftest"; rm -rf "$WTR"; mkdir -p "$WTR"
+  # HERMETIC (same reason as the LIG block): halt git's repo discovery at the fixture's
+  # parent so repoRoot() can't climb into a surrounding host repo when install.sh runs
+  # inside one.
+  export GIT_CEILING_DIRECTORIES="$(dirname "$WTR")"
   ( cd "$WTR" && git init -q && git config user.email a@b.c && git config user.name a && git commit -q --allow-empty -m init && git branch -M main && git checkout -q -b task/w && git commit -q --allow-empty -m w && git checkout -q main && git worktree add -q .claude/worktrees/wt task/w ) >/dev/null 2>&1
   WT="$WTR/.claude/worktrees/wt"
+  # precondition: a gate run from the linked worktree must resolve STATE to the shared root.
+  sr=$(node -e 'const H=require(process.argv[1]);process.stdout.write(H.repoRoot(process.argv[2]))' "$TG/lib/phalanx-hook.js" "$WT" 2>/dev/null)
+  [ "$sr" = "$WTR" ] && echo "    PASS worktree:resolves-shared-root" || { echo "    FAIL worktree:resolves-shared-root (got '$sr' != '$WTR')"; FAIL=1; }
   liw() { echo "$1" | PHALANX_WARN='' node "$LIGG"; }
   printf '# T\n- [ ] do it\n' > "$WTR/TASKS.md"   # backlog ONLY at the shared root
   o=$(liw "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$WT/src/a.js\"},\"cwd\":\"$WT\",\"session_id\":\"wt1\"}"); expect_allow "worktree:edit-sees-shared-seed" x "$o"
