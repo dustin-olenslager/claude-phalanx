@@ -43,6 +43,10 @@ ev_ts="$(date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 0)"
 flat_msg="$(printf '%s' "$msg" | tr '\n\t' '  ')"
 printf '%s\t%s\t%s\t%s\n' "$ev_ts" "$event" "$thread" "$flat_msg" >> "$LOGDIR/events.log" 2>/dev/null || true
 
+# ponytail: a repo under /tmp is a throwaway test fixture (real jobs + worktrees never live there).
+# Log locally above, but NEVER hit a real sink — stops supervisor self-tests flooding Telegram.
+case "$repo" in /tmp/*|"${TMPDIR:-/nonexistent}"/*) exit 0 ;; esac
+
 if [ -n "${PHALANX_NOTIFY_CMD:-}" ]; then
   "$PHALANX_NOTIFY_CMD" "$event" "$msg" "$repo" "$thread" >/dev/null 2>&1 \
     || printf '%s\tWARN\t%s\tnotify-cmd failed\n' "$ev_ts" "$thread" >> "$LOGDIR/events.log" 2>/dev/null || true
