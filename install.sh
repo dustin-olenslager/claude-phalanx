@@ -309,6 +309,13 @@ S1="$CBDIR/s1m.jsonl"; cbusage 2 150000 "claude-test-context-1m" > "$S1"
 o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S1" "$CBDIR" | node "$CBJ")
 [ -z "$o" ] && echo "    PASS cb:senses-1m-model" || { echo "    FAIL cb:senses-1m-model got: $o"; FAIL=1; }
 
+# OPUS-4 1M WINDOW (the false-ceiling fix): claude-opus-4-* carries NO "1m" marker but runs a
+# 1M window. 150k real -> 15% -> SILENT. Before the fix it defaulted to 200k -> 75% -> false CEILING.
+rm -f "$CBDIR/PROGRESS.md"
+S4="$CBDIR/sopus4.jsonl"; cbusage 2 150000 "claude-opus-4-8" > "$S4"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S4" "$CBDIR" | node "$CBJ")
+[ -z "$o" ] && echo "    PASS cb:senses-opus4-1m" || { echo "    FAIL cb:senses-opus4-1m got: $o"; FAIL=1; }
+
 # real high usage (~50% of 1M) trips. supervisor active -> defer msg, never "/clear".
 BIGTP="$CBDIR/t.jsonl"; { head -c 40000 /dev/zero | tr '\0' x; printf '\n'; cbusage 2 500000; } > "$BIGTP"
 rm -f "$CBDIR/PROGRESS.md"
