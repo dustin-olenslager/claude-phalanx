@@ -124,11 +124,20 @@ runwork_pid_alive() {
   fi
   return 0
 }
-if ! mkdir "$LOCK" 2>/dev/null; then
+# Single-instance lock. flock is kernel-atomic AND auto-released the instant this process
+# dies (even SIGKILL/crash) -- so there is no orphan lock and, crucially, no stale-pidfile
+# RECLAIM RACE. That race is what let N supervisors run the SAME repo at once: a killed
+# supervisor left lock+stale-pidfile behind, then several launchers all saw "owner dead ->
+# reclaim" and the non-atomic `rm -rf + mkdir` let them ALL proceed. flock -n admits exactly
+# one holder; everyone else exits 3. Legacy mkdir guard kept only if flock is unavailable.
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$LOCK.flock" || { echo "cannot open lock file for $REPO" >&2; exit 3; }
+  if ! flock -n 9; then echo "supervisor already running for $REPO" >&2; exit 3; fi
+elif ! mkdir "$LOCK" 2>/dev/null; then
   if [ -f "$PIDF" ] && runwork_pid_alive "$(cat "$PIDF" 2>/dev/null)"; then
     echo "supervisor already running (pid $(cat "$PIDF")) for $REPO" >&2; exit 3
   fi
-  # Dead/stale owner: atomically reclaim by recreating the lock dir.
+  # Dead/stale owner (no-flock fallback only): reclaim the lock dir.
   rm -rf "$LOCK" 2>/dev/null; mkdir "$LOCK" 2>/dev/null || { echo "cannot acquire lock" >&2; exit 3; }
 fi
 # Install the cleanup trap immediately after acquiring the lock and BEFORE writing
