@@ -43,6 +43,17 @@ ev_ts="$(date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 0)"
 flat_msg="$(printf '%s' "$msg" | tr '\n\t' '  ')"
 printf '%s\t%s\t%s\t%s\n' "$ev_ts" "$event" "$thread" "$flat_msg" >> "$LOGDIR/events.log" 2>/dev/null || true
 
+# ponytail: a repo under /tmp is a throwaway test fixture (real jobs + worktrees never live there).
+# Log locally above, but NEVER hit a real sink — stops supervisor self-tests flooding Telegram.
+# Resolve symlinks first (macOS /tmp -> /private/tmp; a symlinked /tmp on Linux) so the guard
+# matches the REAL path, not a literal a fixture could pass to bypass it. Strip any trailing
+# slash from TMPDIR so its arm isn't silently dead (TMPDIR=/tmp/ -> pattern /tmp//*).
+guard_repo="$(cd "$repo" 2>/dev/null && pwd -P || printf '%s' "$repo")"
+guard_tmpdir="${TMPDIR:-/nonexistent}"; guard_tmpdir="${guard_tmpdir%/}"
+case "$guard_repo" in
+  /tmp|/tmp/*|/private/tmp|/private/tmp/*|"$guard_tmpdir"|"$guard_tmpdir"/*) exit 0 ;;
+esac
+
 if [ -n "${PHALANX_NOTIFY_CMD:-}" ]; then
   "$PHALANX_NOTIFY_CMD" "$event" "$msg" "$repo" "$thread" >/dev/null 2>&1 \
     || printf '%s\tWARN\t%s\tnotify-cmd failed\n' "$ev_ts" "$thread" >> "$LOGDIR/events.log" 2>/dev/null || true
