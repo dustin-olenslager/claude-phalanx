@@ -1,29 +1,41 @@
 #!/usr/bin/env bash
-# Phalanx leak guard (pre-push). Hard-blocks a push when the commits being pushed
-# contain:
-#   - secrets (ALWAYS, any repo): AWS/GCP keys, private keys, GitHub/Slack/Stripe
-#     tokens, MCP tokens, generic hardcoded credential assignments;
-#   - personal/private terms (ONLY for the public claude-phalanx repo): read from
-#     a LOCAL denylist file that is NEVER committed -- $PHALANX_LEAKWORDS or
-#     $HOME/.claude/.phalanx-leakwords (one term/regex per line, # comments ok).
-# Bypass (discouraged, never for the public repo): git push --no-verify.
+# Phalanx leak guard (pre-push). Blocks a push whose commits contain:
+#   - secrets (EVERY public repo): gitleaks fail-closed + a regex backstop;
+#   - universal personal/infra terms (EVERY public repo): gmail, home/VPS IPs,
+#     API-key prefixes, infra paths -- read from $PHALANX_LEAKWORDS_PUBLIC or
+#     $HOME/.claude/.phalanx-leakwords-public. These are never legitimate in ANY
+#     public repo, so they are checked even on a public repo that is "about" the
+#     operator's own project (e.g. its name appears legitimately).
+#   - the FULL project denylist (claude-phalanx ONLY -- the generic public tool
+#     must mention none of the operator's projects): $PHALANX_LEAKWORDS or
+#     $HOME/.claude/.phalanx-leakwords.
+# "Public" = the claude-phalanx remote, OR any remote-URL substring listed in
+#   $PHALANX_PUBLIC_REMOTES / $HOME/.claude/.phalanx-public-remotes (e.g. a slug
+#   like "owner/plexo"). Private repos are NOT guarded -- their workflows
+#   legitimately use these terms. The denylist files are LOCAL, never committed.
+# Bypass (never for a public repo): git push --no-verify.
 set -uo pipefail
 
 REMOTE_URL="${2:-}"
 LEAKWORDS="${PHALANX_LEAKWORDS:-$HOME/.claude/.phalanx-leakwords}"
+LEAKWORDS_PUBLIC="${PHALANX_LEAKWORDS_PUBLIC:-$HOME/.claude/.phalanx-leakwords-public}"
+PUBLIC_REMOTES="${PHALANX_PUBLIC_REMOTES:-$HOME/.claude/.phalanx-public-remotes}"
 Z=0000000000000000000000000000000000000000
-is_public=0
-case "$REMOTE_URL" in *claude-phalanx*) is_public=1 ;; esac
 
-# Scope: this guard ONLY governs pushes to the public claude-phalanx repo, so it
-# never interferes with your other (private) repositories' workflows.
-[ "$is_public" = 1 ] || exit 0
+# Classify the remote: phalanx (full guard) | public (secrets+universal) | private (skip).
+class=private
+case "$REMOTE_URL" in *claude-phalanx*) class=phalanx ;; esac
+if [ "$class" = private ] && [ -f "$PUBLIC_REMOTES" ]; then
+  while IFS= read -r pr; do
+    case "$pr" in ''|\#*) continue ;; esac
+    case "$REMOTE_URL" in *"$pr"*) class=public; break ;; esac
+  done < "$PUBLIC_REMOTES"
+fi
+[ "$class" = private ] && exit 0
 
-# PUBLIC push = FAIL-CLOSED on gitleaks. gitleaks is mandatory here: if it is not
-# installed, or it errors/flags, REJECT the push rather than silently downgrading
-# to the weaker regex set below. The regex pass still runs as defense in depth.
+# Any public push = FAIL-CLOSED on gitleaks (mandatory: missing/erroring/flagging => reject).
 if ! command -v gitleaks >/dev/null 2>&1; then
-  echo "PHALANX LEAK GUARD: gitleaks is REQUIRED for pushes to the public repo but is not installed."
+  echo "PHALANX LEAK GUARD: gitleaks is REQUIRED for public pushes but is not installed."
   echo "Install gitleaks (https://github.com/gitleaks/gitleaks) and retry. Push REJECTED (fail-closed)."
   exit 1
 fi
@@ -36,6 +48,10 @@ fi
 SECRET_RE='AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[0-9A-Za-z]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|sk_live_[0-9a-zA-Z]{16,}|AIza[0-9A-Za-z_-]{35}|sk_mt_[0-9A-Za-z]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|(api[_-]?key|secret|token|password|passwd|client[_-]?secret|access[_-]?token)["'"'"' ]*[:=]["'"'"' ]*["'"'"'][^"'"'"']{16,}["'"'"']'
 SECRET_ALLOW='process\.env|import\.meta\.env|os\.environ|getenv|Deno\.env|YOUR_|REPLACE|EXAMPLE|placeholder|xxxx|\$\{|noreply'
 
+# Denylist patterns: universal (all public) + full project list (claude-phalanx only).
+uni_pat=""; [ -f "$LEAKWORDS_PUBLIC" ] && uni_pat=$(grep -vE '^[[:space:]]*(#|$)' "$LEAKWORDS_PUBLIC" | paste -sd'|' - 2>/dev/null)
+full_pat=""; { [ "$class" = phalanx ] && [ -f "$LEAKWORDS" ]; } && full_pat=$(grep -vE '^[[:space:]]*(#|$)' "$LEAKWORDS" | paste -sd'|' - 2>/dev/null)
+
 fail=0
 # shellcheck disable=SC2034  # local_ref/remote_ref are git's stdin fields; kept for documentation
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -47,28 +63,26 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
   [ -n "$added" ] || continue
 
-  # Scope the allowlist to the MATCHED substring (-o), not the whole added line:
-  # a benign `process.env.X` elsewhere on the line must not mask a real secret.
+  # Scope the allowlist to the MATCHED substring (-o), not the whole added line.
   sh=$(printf '%s\n' "$added" | grep -EnIo "$SECRET_RE" | grep -EviI "$SECRET_ALLOW" || true)
   if [ -n "$sh" ]; then
     echo "PHALANX LEAK GUARD: possible SECRET in pushed commits:"; printf '  %s\n' "$sh" | head -12; fail=1
   fi
 
-  if [ "$is_public" = 1 ] && [ -f "$LEAKWORDS" ]; then
-    pat=$(grep -vE '^[[:space:]]*(#|$)' "$LEAKWORDS" | paste -sd'|' - 2>/dev/null)
-    if [ -n "$pat" ]; then
-      ph=$(printf '%s\n' "$added" | grep -EniI "$pat" || true)
-      if [ -n "$ph" ]; then
-        echo "PHALANX LEAK GUARD: PERSONAL/PRIVATE term in push to PUBLIC repo ($REMOTE_URL):"; printf '  %s\n' "$ph" | head -12; fail=1
-      fi
+  for pair in "universal:$uni_pat" "project:$full_pat"; do
+    lbl="${pair%%:*}"; pat="${pair#*:}"
+    [ -n "$pat" ] || continue
+    ph=$(printf '%s\n' "$added" | grep -EniI "$pat" || true)
+    if [ -n "$ph" ]; then
+      echo "PHALANX LEAK GUARD: $lbl term in push to PUBLIC repo ($REMOTE_URL):"; printf '  %s\n' "$ph" | head -12; fail=1
     fi
-  fi
+  done
 done
 
 if [ "$fail" != 0 ]; then
   echo ""
   echo "Push REJECTED. Remove the offending content. If this is a genuine false positive on a"
-  echo "NON-public repo you may use 'git push --no-verify' -- never do that for claude-phalanx."
+  echo "NON-public repo you may use 'git push --no-verify' -- never do that for a public repo."
   exit 1
 fi
 exit 0
