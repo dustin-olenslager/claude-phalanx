@@ -47,3 +47,5 @@ sims green. Commit on this branch ONLY if sims ran green this turn.
 - [x] (req:NEW) Generalized loop access: $CLAUDE_DIR/.loop-access.env (0600) sourced onto the claude-exec env in run-work.sh so a user can wire arbitrary creds (Cloudflare/etc); ship .example + gitignore + README + install chmod. MCP/browser/e2e/SSH already inherited. — already shipped as commit 7486d10
 
 - [x] (req:NEW) context-budget Opus-4 window over-read: windowForModel defaults claude-opus-4-* to 200k but the fleet runs Opus 4.x at 1M, so 104k real ctx reads 52% (false ceiling WARN) vs true 10%. Map opus-4 -> 1M; add cb: sim; keep supervised behavior intact.
+
+- [x] (req:NEW) context-budget: make Opus-4 1M window OPT-IN (PHALANX_OPUS_1M=1), default safe 200k; sims for default-200k-trips + optin-on-silent + env-override. Revises PR #17. — done
