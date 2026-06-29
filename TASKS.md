@@ -51,5 +51,6 @@ sims green. Commit on this branch ONLY if sims ran green this turn.
 - [x] (req:NEW) context-budget: make Opus-4 1M window OPT-IN (PHALANX_OPUS_1M=1), default safe 200k; sims for default-200k-trips + optin-on-silent + env-override. Revises PR #17. — done
 
 - [x] (req:NEW) notify /tmp isolation — case-guard in scripts/notify.sh so a repo under /tmp logs locally but never hits a real sink; scripts/test-notify-isolation.sh wired into verify.sh; chmod +x notify.sh (run-work.sh:114 skips non-exec copy → guard never ran). Hot-patch live copies + Herald stray-topic cleanup deferred (external/creds, separate op). — PR pending
+- [x] (req:NEW) install.sh self-test: make loop-integrity/worktree sims hermetic via GIT_CEILING_DIRECTORIES; assert fixture toplevel. — PR pending
 
 - [x] (req:NEW) notify hardening: run-work.sh invoke `bash "$NOTIFY"` + `[ -f ]` (drop exec-bit dep); notify.sh realpath + /private/tmp + trailing-slash TMPDIR in the /tmp guard; +2 test cases. — done
