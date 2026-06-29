@@ -280,15 +280,28 @@ CBJ="$TG/context-budget.js"
 CBDIR="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-cb)"; mkdir -p "$CBDIR"
 printf '# T\n- [ ] big\n' > "$CBDIR/TASKS.md"
 # one assistant transcript line whose usage = $1 input + $2 cache_read tokens.
-cbusage() { printf '{"type":"assistant","message":{"usage":{"input_tokens":%s,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":12}}}\n' "$1" "$2"; }
+cbusage() { printf '{"type":"assistant","message":{"model":"%s","usage":{"input_tokens":%s,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":12}}}\n' "${3:-}" "$1" "$2"; }
 
 # FALSE-CEILING GUARD (the bug this fixes): a transcript huge in BYTES (the fixed
-# system prompt + CLAUDE.md dump) -- ~57% of a 200k window under the old bytes/3.5 --
-# but whose real usage is ~168k/1M = 17% must stay SILENT (below the 38% warn).
+# system prompt + CLAUDE.md dump) but whose REAL usage is light (~50k = 25% of the
+# sensed 200k window) must stay SILENT (below the 38% warn) -- proves we read usage,
+# not bytes.
 NORMTP="$CBDIR/normal.jsonl"
-{ head -c 400000 /dev/zero | tr '\0' x; printf '\n'; cbusage 2 168000; } > "$NORMTP"
+{ head -c 400000 /dev/zero | tr '\0' x; printf '\n'; cbusage 2 50000; } > "$NORMTP"
 o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$NORMTP" "$CBDIR" | node "$CBJ")
 [ -z "$o" ] && echo "    PASS cb:normal-no-falsetrip" || { echo "    FAIL cb:normal-no-falsetrip got: $o"; FAIL=1; }
+
+# MODEL-SENSING: the window is derived from the model on the turn (operator runs different
+# models). 150k real tokens under a standard 200k model -> 75% -> CEILING; the SAME 150k
+# under a 1M-context model id -> 15% -> SILENT. No env override in play.
+rm -f "$CBDIR/PROGRESS.md"
+S2="$CBDIR/s200.jsonl"; cbusage 2 150000 "claude-sonnet-4-6" > "$S2"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S2" "$CBDIR" | node "$CBJ")
+case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:senses-200k-model";; *) echo "    FAIL cb:senses-200k-model got: $o"; FAIL=1;; esac
+rm -f "$CBDIR/PROGRESS.md"
+S1="$CBDIR/s1m.jsonl"; cbusage 2 150000 "claude-test-context-1m" > "$S1"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S1" "$CBDIR" | node "$CBJ")
+[ -z "$o" ] && echo "    PASS cb:senses-1m-model" || { echo "    FAIL cb:senses-1m-model got: $o"; FAIL=1; }
 
 # real high usage (~50% of 1M) trips. supervisor active -> defer msg, never "/clear".
 BIGTP="$CBDIR/t.jsonl"; { head -c 40000 /dev/zero | tr '\0' x; printf '\n'; cbusage 2 500000; } > "$BIGTP"
@@ -303,9 +316,10 @@ oo=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$BIGTP" "$CBDIR" | PHALANX_ON
 [ -f "$CBDIR/PROGRESS.md" ] && { echo "    FAIL cb:oneshot-no-respawn (wrote RESPAWN)"; FAIL=1; } || echo "    PASS cb:oneshot-no-respawn"
 case "$oo" in *"<<CONTINUE>>"*) echo "    PASS cb:oneshot-signals-continue";; *) echo "    FAIL cb:oneshot-signals-continue (no <<CONTINUE>> on ceiling)"; FAIL=1;; esac
 
-# env-derived window: the SAME normal transcript trips once the window is tiny (200k).
+# env override BEATS sensing: PHALANX_CTX_WINDOW forces the window, so the same 50k normal
+# transcript (silent at the sensed 200k) trips once the window is forced tiny (60k -> 83%).
 rm -f "$CBDIR/PROGRESS.md"
-o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$NORMTP" "$CBDIR" | PHALANX_CTX_WINDOW=200000 node "$CBJ")
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$NORMTP" "$CBDIR" | PHALANX_CTX_WINDOW=60000 node "$CBJ")
 case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:env-window-trips";; *) echo "    FAIL cb:env-window-trips got: $o"; FAIL=1;; esac
 
 # no usage line yet -> SILENT (no byte-estimate guess). Even a huge byte transcript
