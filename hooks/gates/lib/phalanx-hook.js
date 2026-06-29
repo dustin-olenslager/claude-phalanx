@@ -259,6 +259,21 @@ const GIT_MERGE = /\bgit\s+(?:-C\s+\S+\s+)?merge\b/;
 const CHECKOUT_MAIN = /\bgit\b[^\n]*\b(checkout|switch)\b[^\n]*\b(main|master)\b/;
 // A push that publishes main (gated the same way as the merge that produced it).
 const PUSH_MAIN = /\bgit\b[^\n]*\bpush\b[^\n]*\b(main|master)\b/;
+// Strip single-quoted strings, double-quoted strings, and heredoc bodies from a shell
+// command before testing PUSH_MAIN, so literal text inside heredocs or echo strings
+// (e.g. checkpoint writes "git push origin main" into PROGRESS.md) does NOT false-fire.
+function stripQuotedContent(cmd) {
+  var s = (cmd || "");
+  // Remove heredoc bodies: <<WORD newline ... newline WORD (non-greedy, multiline)
+  s = s.replace(/<<([A-Z_][A-Z0-9_]*)([^\n]*)\n[\s\S]*?\n\1\b/g, "<<HEREDOC");
+  // Remove <<'WORD' heredocs
+  s = s.replace(/<<'([A-Z_][A-Z0-9_]*)'([^\n]*)\n[\s\S]*?\n\1\b/g, "<<'HEREDOC'");
+  // Remove single-quoted strings (no escapes inside single quotes in POSIX shell)
+  s = s.replace(/'[^']*'/g, "''");
+  // Remove double-quoted strings (simplified)
+  s = s.replace(/"[^"]*"/g, '""');
+  return s;
+}
 
 // Extract the MERGED (source) branch from a `git merge …` command, skipping flags
 // and `-m <msg>` and never returning main/master (the target). Used to look up that
@@ -337,7 +352,7 @@ module.exports = {
   respawnActive, respawnPresent, riskLineOf, tasksState,
   stateDir, flagHelpers, metaRe,
   repoRoot, currentBranch, markVerified, verifyFlagFresh, verifyFlagFreshFor,
-  GIT_MERGE, CHECKOUT_MAIN, PUSH_MAIN, mergedBranch, mergeCwdPath, autoMergeEnabled, deployScript,
+  GIT_MERGE, CHECKOUT_MAIN, PUSH_MAIN, stripQuotedContent, mergedBranch, mergeCwdPath, autoMergeEnabled, deployScript,
   autorunEnabled, MIGRATION_PATH, pathsTouchMigration, branchTouchesMigration,
   CODE, TS, VERIFY_CMD,
 };
