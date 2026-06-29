@@ -309,6 +309,23 @@ S1="$CBDIR/s1m.jsonl"; cbusage 2 150000 "claude-test-context-1m" > "$S1"
 o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S1" "$CBDIR" | node "$CBJ")
 [ -z "$o" ] && echo "    PASS cb:senses-1m-model" || { echo "    FAIL cb:senses-1m-model got: $o"; FAIL=1; }
 
+# OPUS-4 1M WINDOW is OPT-IN (PHALANX_OPUS_1M=1), NOT a default. claude-opus-4-* carries no
+# "1m" marker and DEFAULTS to the standard 200k window -- guessing 1M would under-read 5x for
+# every non-beta user and never trip the ceiling. Three cases prove the policy:
+S4="$CBDIR/sopus4.jsonl"; cbusage 2 150000 "claude-opus-4-8" > "$S4"
+# (a) default (no opt-in): 150k under opus-4 -> 75% of 200k -> CEILING (safe default).
+rm -f "$CBDIR/PROGRESS.md"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S4" "$CBDIR" | env -u PHALANX_OPUS_1M node "$CBJ")
+case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:opus4-default-200k";; *) echo "    FAIL cb:opus4-default-200k got: $o"; FAIL=1;; esac
+# (b) opt-in ON: PHALANX_OPUS_1M=1 -> 150k under opus-4 -> 15% of 1M -> SILENT.
+rm -f "$CBDIR/PROGRESS.md"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S4" "$CBDIR" | PHALANX_OPUS_1M=1 node "$CBJ")
+[ -z "$o" ] && echo "    PASS cb:opus4-optin-1m" || { echo "    FAIL cb:opus4-optin-1m got: $o"; FAIL=1; }
+# (c) env override still wins over opt-in: force 200k -> CEILING even with opt-in set.
+rm -f "$CBDIR/PROGRESS.md"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S4" "$CBDIR" | PHALANX_OPUS_1M=1 PHALANX_CTX_WINDOW=200000 node "$CBJ")
+case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:opus4-ctxwindow-overrides-optin";; *) echo "    FAIL cb:opus4-ctxwindow-overrides-optin got: $o"; FAIL=1;; esac
+
 # real high usage (~50% of 1M) trips. supervisor active -> defer msg, never "/clear".
 BIGTP="$CBDIR/t.jsonl"; { head -c 40000 /dev/zero | tr '\0' x; printf '\n'; cbusage 2 500000; } > "$BIGTP"
 rm -f "$CBDIR/PROGRESS.md"
@@ -318,7 +335,7 @@ case "$o" in *"supervisor will relaunch"*) case "$o" in *"/clear"*) echo "    FA
 # one-shot, no supervisor -> NEVER writes a RESPAWN file, BUT signals <<CONTINUE>> so a
 # host (e.g. the Telegram bot) can hand the repo to a detached supervisor on ceiling.
 rm -f "$CBDIR/PROGRESS.md"
-oo=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$BIGTP" "$CBDIR" | PHALANX_ONESHOT=1 node "$CBJ")
+oo=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$BIGTP" "$CBDIR" | env -u PHALANX_SUPERVISOR PHALANX_ONESHOT=1 node "$CBJ")
 [ -f "$CBDIR/PROGRESS.md" ] && { echo "    FAIL cb:oneshot-no-respawn (wrote RESPAWN)"; FAIL=1; } || echo "    PASS cb:oneshot-no-respawn"
 case "$oo" in *"<<CONTINUE>>"*) echo "    PASS cb:oneshot-signals-continue";; *) echo "    FAIL cb:oneshot-signals-continue (no <<CONTINUE>> on ceiling)"; FAIL=1;; esac
 
@@ -372,7 +389,7 @@ printf '#!/usr/bin/env bash\nprintf "%%s|%%s|%%s|%%s\\n" "$1" "$2" "$3" "$4" > "
 GOTFILE="$NOUT" PHALANX_NOTIFY_CMD="$NDIR/sink.sh" PHALANX_REPO="/x/my-repo" bash "$CLAUDE_DIR/notify.sh" "done" "all green" >/dev/null 2>&1
 got=$(cat "$NOUT" 2>/dev/null || echo)
 case "$got" in *"|my-repo") echo "    PASS notify:thread-to-adapter";; *) echo "    FAIL notify:thread-to-adapter got: $got"; FAIL=1;; esac
-out=$(PHALANX_REPO="/x/my-repo" bash "$CLAUDE_DIR/notify.sh" info hi 2>/dev/null)
+out=$(env -u PHALANX_NOTIFY_CMD -u PHALANX_NOTIFY_URL PHALANX_REPO="/x/my-repo" bash "$CLAUDE_DIR/notify.sh" info hi 2>/dev/null)
 case "$out" in *my-repo*) echo "    PASS notify:default-thread-is-repo";; *) echo "    FAIL notify:default-thread-is-repo got: $out"; FAIL=1;; esac
 rm -rf "$NDIR"
 
