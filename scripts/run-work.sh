@@ -111,7 +111,10 @@ if [ -f "$LOOP_ACCESS_ENV" ]; then
     done < "$LOOP_ACCESS_ENV"
   fi
 fi
-NOTIFY="$HERE/notify.sh"; [ -x "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
+# Gate on -f (exists), not -x: a checkout/clone over CIFS/SMB or core.fileMode=false
+# silently drops the exec bit, which would skip the in-repo copy (and its /tmp guard).
+# We invoke via `bash "$NOTIFY"` below, so the exec bit is irrelevant.
+NOTIFY="$HERE/notify.sh"; [ -f "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
 # Single source of truth for TASKS/PROGRESS parsing (mirrors the JS lib tasksState).
 TS_LIB="$HERE/tasks-state.sh"; [ -f "$TS_LIB" ] || TS_LIB="$CLAUDE_DIR/tasks-state.sh"
@@ -132,7 +135,7 @@ RUN_STAMP="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo 0)-$$"
 RUNDIR="$LOGDIR/run-$RUN_STAMP"
 mkdir -p "$RUNDIR"
 
-note() { [ -x "$NOTIFY" ] && PHALANX_REPO="$REPO" "$NOTIFY" "$1" "$2" >/dev/null 2>&1 || true; }
+note() { [ -f "$NOTIFY" ] && PHALANX_REPO="$REPO" bash "$NOTIFY" "$1" "$2" >/dev/null 2>&1 || true; }
 
 # --- single-instance lock (atomic mkdir) -------------------------------------
 # Verify a recorded pid is ACTUALLY a live run-work.sh (item 3): a bare `kill -0`
