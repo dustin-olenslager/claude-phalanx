@@ -84,3 +84,22 @@ DEFERRED (separate ops, not in this PR): hot-patch live deployed copies; Herald 
 (needs Herald bot token + chat_id, external destructive Telegram API call — operator-gated).
 
 <!-- RESPAWN 2026-06-29T18:49:45.207Z ctx~47% -- checkpoint state above, STOP, resume fresh -->
+
+## 2026-06-30 — blocked-repo no-relaunch (task/blocked-no-relaunch)
+
+### DONE this pass
+1. `scripts/run-work.sh`: quiet early-exit BEFORE lock+auth preflight. After BLOCKED_FILE defined, before lock: checks `.work-off` (repo+global), BLOCKED_FILE, ts_blocked(). If any: materialize sentinel, exit 0 silently.
+2. `/workspace/_eval/herald/src/container-exec.mjs`: added `repoIsBlocked(cwd)` (same pattern as repoHasOpenTasks); checks `.claude-runs/BLOCKED` OR `.work-off` via docker exec.
+3. `/workspace/_eval/herald/src/supervisor.mjs`: `launchSupervisor()` calls `exec.repoIsBlocked(cwd)` first; returns early if true.
+4. `install.sh`: 3 new sims (`supervisor:early-exit-blocked`, `supervisor:early-exit-work-off`, `supervisor:early-exit-materializes-sentinel`) — all PASS.
+
+### BLOCKING: pipeline:commit-no-verify FAILS (x2)
+Root cause: TASKS.md now has open `- [ ]` item. install.sh runs `fire pipeline-gate.js` with cwd=/workspace/claude-phalanx. Gate detects loop-repo (TASKS.md present + open), changes behavior → deny becomes empty.
+Evidence: `git stash` (no open tasks) → PASS; `git stash pop` (open task restored) → FAIL.
+
+### Fix plan (next pass)
+Check `hooks/gates/pipeline-gate.js` for TASKS.md/isLoopRepo check. Simplest fix: in install.sh, run `fire` calls from a cwd without TASKS.md (e.g. `cd /tmp` before the gate sim block, restore after). OR pass env that suppresses loop-repo check for self-test. Then re-run sims → all green → commit → PR.
+
+After ship: hot-patch live `/config/.claude/run-work.sh` + `/home/cc/.claude/run-work.sh`. Herald commit+deploy separate.
+
+<!-- RESPAWN 2026-06-30T00:18:00.000Z ctx~48% -- checkpoint above, STOP, fresh pass resumes -->
