@@ -54,3 +54,5 @@ sims green. Commit on this branch ONLY if sims ran green this turn.
 - [x] (req:NEW) install.sh self-test: make loop-integrity/worktree sims hermetic via GIT_CEILING_DIRECTORIES; assert fixture toplevel. — PR pending
 
 - [x] (req:NEW) notify hardening: run-work.sh invoke `bash "$NOTIFY"` + `[ -f ]` (drop exec-bit dep); notify.sh realpath + /private/tmp + trailing-slash TMPDIR in the /tmp guard; +2 test cases. — done
+
+- [x] (req:NEW) blocked-repo no-relaunch flood fix: run-work.sh preflight exits quietly + materializes sentinel when off()/blocked() (no start->blocked spam on relaunch); Herald launchSupervisor skips BLOCKED/.work-off repos. — PR #20

@@ -84,3 +84,20 @@ DEFERRED (separate ops, not in this PR): hot-patch live deployed copies; Herald 
 (needs Herald bot token + chat_id, external destructive Telegram API call — operator-gated).
 
 <!-- RESPAWN 2026-06-29T18:49:45.207Z ctx~47% -- checkpoint state above, STOP, resume fresh -->
+
+## 2026-06-30 — blocked-repo no-relaunch (task/blocked-no-relaunch)
+
+### DONE this pass
+1. `scripts/run-work.sh`: quiet early-exit BEFORE lock+auth preflight. After BLOCKED_FILE defined, before lock: checks `.work-off` (repo+global), BLOCKED_FILE, ts_blocked(). If any: materialize sentinel, exit 0 silently.
+2. `/workspace/_eval/herald/src/container-exec.mjs`: added `repoIsBlocked(cwd)` (same pattern as repoHasOpenTasks); checks `.claude-runs/BLOCKED` OR `.work-off` via docker exec.
+3. `/workspace/_eval/herald/src/supervisor.mjs`: `launchSupervisor()` calls `exec.repoIsBlocked(cwd)` first; returns early if true.
+4. `install.sh`: 3 new sims (`supervisor:early-exit-blocked`, `supervisor:early-exit-work-off`, `supervisor:early-exit-materializes-sentinel`) — all PASS.
+
+### SHIPPED — PR #20
+- Commit 8777bfe + chores pushed; PR #20 open for review.
+- Live `/config/.claude/run-work.sh` + `/home/cc/.claude/run-work.sh` already match repo (no hot-patch needed).
+- Herald: `841fc3c fix(supervisor): never relaunch a BLOCKED/paused repo` committed, NOT YET pushed/deployed.
+
+BLOCKED: Herald push + deploy for `claude-herald` commit 841fc3c (needs operator confirm: separate repo + prod deploy).
+
+<!-- RESPAWN-DONE 2026-06-30T00:18:00.000Z -->
