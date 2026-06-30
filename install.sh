@@ -468,6 +468,46 @@ STUB
   rm -rf "$SDIR"
 else echo "    SKIP supervisor:* (sed not installed)"; fi
 
+# early-exit: a blocked/off repo must exit 0 WITHOUT running auth preflight (no claude call).
+EB="$(mktemp -d)"; mkdir -p "$EB/repo/.claude-runs" "$EB/bin" "$EB/cd"
+printf 'BLOCKED: test sentinel\n' > "$EB/repo/.claude-runs/BLOCKED"
+printf -- '- [ ] x\n' > "$EB/repo/TASKS.md"
+# No headless env: if preflight ran, it would call fail_closed and exit 1.
+claude_called=0
+cat > "$EB/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+echo CALLED; exit 0
+STUB
+chmod +x "$EB/bin/claude"
+eb_out=$(PATH="$EB/bin:$PATH" CLAUDE_DIR="$EB/cd" bash "$RW" -r "$EB/repo" 2>&1 || true)
+case "$eb_out" in *CALLED*) echo "    FAIL supervisor:early-exit-blocked (ran auth preflight)"; FAIL=1;;
+  *) echo "    PASS supervisor:early-exit-blocked"; esac
+# early-exit on .work-off (no BLOCKED file)
+EW="$(mktemp -d)"; mkdir -p "$EW/repo" "$EW/bin" "$EW/cd"
+touch "$EW/repo/.work-off"; printf -- '- [ ] x\n' > "$EW/repo/TASKS.md"
+cat > "$EW/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+echo CALLED; exit 0
+STUB
+chmod +x "$EW/bin/claude"
+ew_out=$(PATH="$EW/bin:$PATH" CLAUDE_DIR="$EW/cd" bash "$RW" -r "$EW/repo" 2>&1 || true)
+case "$ew_out" in *CALLED*) echo "    FAIL supervisor:early-exit-work-off (ran auth preflight)"; FAIL=1;;
+  *) echo "    PASS supervisor:early-exit-work-off"; esac
+# sentinel materialize: PROGRESS.md BLOCKED line -> materializes .claude-runs/BLOCKED
+ES="$(mktemp -d)"; mkdir -p "$ES/repo" "$ES/bin" "$ES/cd"
+printf -- '- [ ] x\n' > "$ES/repo/TASKS.md"
+printf 'BLOCKED: from progress md\n' > "$ES/repo/PROGRESS.md"
+cat > "$ES/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+echo CALLED; exit 0
+STUB
+chmod +x "$ES/bin/claude"
+PATH="$ES/bin:$PATH" CLAUDE_DIR="$ES/cd" bash "$RW" -r "$ES/repo" >/dev/null 2>&1 || true
+[ -f "$ES/repo/.claude-runs/BLOCKED" ] \
+  && echo "    PASS supervisor:early-exit-materializes-sentinel" \
+  || { echo "    FAIL supervisor:early-exit-materializes-sentinel"; FAIL=1; }
+rm -rf "$EB" "$EW" "$ES"
+
 # phalanx-watch autorun gate: a registry repo WITHOUT .phalanx-autorun is SKIPPED and
 # never launched (the 2026-06-27 fleet-runaway fix -- registry != unattended auto-run).
 # Safe: the skip happens before any supervisor launch, so nothing is spawned here.
