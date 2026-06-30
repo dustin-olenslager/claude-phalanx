@@ -93,11 +93,11 @@ DEFERRED (separate ops, not in this PR): hot-patch live deployed copies; Herald 
 3. `/workspace/_eval/herald/src/supervisor.mjs`: `launchSupervisor()` calls `exec.repoIsBlocked(cwd)` first; returns early if true.
 4. `install.sh`: 3 new sims (`supervisor:early-exit-blocked`, `supervisor:early-exit-work-off`, `supervisor:early-exit-materializes-sentinel`) — all PASS.
 
-### RESOLVED — committed as 8777bfe
-Subsequent pass (PR #19 hermetic sims) fixed the pipeline-gate false-block (hermetic cwd).
-All install.sh sims pass (PASS supervisor:early-exit-blocked/work-off/materializes-sentinel).
-Commit landed. PR pending push.
+### SHIPPED — PR #20
+- Commit 8777bfe + chores pushed; PR #20 open for review.
+- Live `/config/.claude/run-work.sh` + `/home/cc/.claude/run-work.sh` already match repo (no hot-patch needed).
+- Herald: `841fc3c fix(supervisor): never relaunch a BLOCKED/paused repo` committed, NOT YET pushed/deployed.
 
-After ship: hot-patch live `/config/.claude/run-work.sh` + `/home/cc/.claude/run-work.sh`. Herald commit+deploy separate.
+BLOCKED: Herald push + deploy for `claude-herald` commit 841fc3c (needs operator confirm: separate repo + prod deploy).
 
 <!-- RESPAWN-DONE 2026-06-30T00:18:00.000Z -->
