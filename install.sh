@@ -473,7 +473,6 @@ EB="$(mktemp -d)"; mkdir -p "$EB/repo/.claude-runs" "$EB/bin" "$EB/cd"
 printf 'BLOCKED: test sentinel\n' > "$EB/repo/.claude-runs/BLOCKED"
 printf -- '- [ ] x\n' > "$EB/repo/TASKS.md"
 # No headless env: if preflight ran, it would call fail_closed and exit 1.
-claude_called=0
 cat > "$EB/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 echo CALLED; exit 0
