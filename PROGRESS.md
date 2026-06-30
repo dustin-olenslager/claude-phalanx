@@ -93,13 +93,11 @@ DEFERRED (separate ops, not in this PR): hot-patch live deployed copies; Herald 
 3. `/workspace/_eval/herald/src/supervisor.mjs`: `launchSupervisor()` calls `exec.repoIsBlocked(cwd)` first; returns early if true.
 4. `install.sh`: 3 new sims (`supervisor:early-exit-blocked`, `supervisor:early-exit-work-off`, `supervisor:early-exit-materializes-sentinel`) — all PASS.
 
-### BLOCKING: pipeline:commit-no-verify FAILS (x2)
-Root cause: TASKS.md now has open `- [ ]` item. install.sh runs `fire pipeline-gate.js` with cwd=/workspace/claude-phalanx. Gate detects loop-repo (TASKS.md present + open), changes behavior → deny becomes empty.
-Evidence: `git stash` (no open tasks) → PASS; `git stash pop` (open task restored) → FAIL.
-
-### Fix plan (next pass)
-Check `hooks/gates/pipeline-gate.js` for TASKS.md/isLoopRepo check. Simplest fix: in install.sh, run `fire` calls from a cwd without TASKS.md (e.g. `cd /tmp` before the gate sim block, restore after). OR pass env that suppresses loop-repo check for self-test. Then re-run sims → all green → commit → PR.
+### RESOLVED — committed as 8777bfe
+Subsequent pass (PR #19 hermetic sims) fixed the pipeline-gate false-block (hermetic cwd).
+All install.sh sims pass (PASS supervisor:early-exit-blocked/work-off/materializes-sentinel).
+Commit landed. PR pending push.
 
 After ship: hot-patch live `/config/.claude/run-work.sh` + `/home/cc/.claude/run-work.sh`. Herald commit+deploy separate.
 
-<!-- RESPAWN 2026-06-30T00:18:00.000Z ctx~48% -- checkpoint above, STOP, fresh pass resumes -->
+<!-- RESPAWN-DONE 2026-06-30T00:18:00.000Z -->
