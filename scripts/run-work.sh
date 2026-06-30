@@ -129,6 +129,19 @@ PIDF="$LOGDIR/supervisor.pid"; LOCK="$LOGDIR/supervisor.lock"
 #  - pending-unseed = req ids that some run must unseed even if it isn't the one
 #    that seeded them (item 2: bot-handoff re-arm leak when a supervisor is up).
 BLOCKED_FILE="$LOGDIR/BLOCKED"; PENDING_UNSEED="$LOGDIR/pending-unseed"
+
+# Quiet early-exit BEFORE lock + auth preflight: a blocked/off repo must not burn
+# a full preflight call on every watcher/Herald relaunch attempt. Also materializes
+# the BLOCKED sentinel from PROGRESS.md so future checks need only stat the file.
+if [ -f "$REPO/.work-off" ] || [ -f "$CLAUDE_DIR/.work-off" ] || [ -f "$BLOCKED_FILE" ]; then
+  exit 0
+fi
+if ts_blocked "$REPO"; then
+  mkdir -p "$LOGDIR" 2>/dev/null || true
+  ts_blocked_line "$REPO" > "$BLOCKED_FILE" 2>/dev/null || true
+  exit 0
+fi
+
 # Per-run log subdir so the -b token budget counts ONLY this run's passes, not
 # every historical pass-*.log ever written for this repo (item 1). Old logs stay.
 RUN_STAMP="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo 0)-$$"
