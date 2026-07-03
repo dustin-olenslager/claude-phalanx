@@ -81,6 +81,10 @@ security-review+secret-scan · verify→verify+run+tsc+lint+Playwright+arch-enfo
 · commit→caveman-commit · memory→consolidate-memory. Gates: no code edit before a
 plan/spec; no git commit before a verify/test/typecheck/lint. Missing skill → do
 it manually. Override: "stop pipeline" → touch CLAUDE_DIR/.pipeline-off.
+DESIGN GATE (always-on): on any new project OR restyling/visual work, BEFORE writing
+implementation code, present 3–5 distinct aesthetic directions each with 2–3 links
+to real production sites/apps that exemplify it (links, not names). Wait for
+operator selection. Applies to new builds and existing-app rehabs.
 
 ## §14 TypeScript = Effect, all code = typed-error + schema + arch-linter
 TS/TSX/MTS/CTS → effect-ts (Effect 3.x: Effect<A,E,R>, tryPromise over await,

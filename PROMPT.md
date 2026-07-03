@@ -50,8 +50,9 @@ phases only for TRIVIAL work (STEP 4a). Missing skill → do the phase manually,
    architecture → system-design + adversarial trade-off interrogation,  | exit: ADR recorded
                   then adr-kit (one ADR per non-trivial decision)
    plan         → phased-plan                                           | exit: plan exists
-   design       → frontend-design, WEB+MOBILE same task, Playwright     | exit: both surfaces
-                  @390px+1440px, WCAG-AA                                          render
+   design       → FIRST: present 3–5 aesthetic directions w/ 2–3 real prod-site  | exit: both surfaces
+                  links each, wait operator pick; THEN frontend-design, WEB+MOBILE         render
+                  same task, Playwright @390px+1440px, WCAG-AA
    implement    → ponytail (YAGNI) + caveman + observability (§12)      | exit: code written
    review       → edge-hunter THEN adversary-review (§16)               | exit: findings fixed
    security     → security-review + secret-scan                         | exit: clean
