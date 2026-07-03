@@ -56,3 +56,5 @@ sims green. Commit on this branch ONLY if sims ran green this turn.
 - [x] (req:NEW) notify hardening: run-work.sh invoke `bash "$NOTIFY"` + `[ -f ]` (drop exec-bit dep); notify.sh realpath + /private/tmp + trailing-slash TMPDIR in the /tmp guard; +2 test cases. — done
 
 - [x] (req:NEW) blocked-repo no-relaunch flood fix: run-work.sh preflight exits quietly + materializes sentinel when off()/blocked() (no start->blocked spam on relaunch); Herald launchSupervisor skips BLOCKED/.work-off repos. — PR #20
+- [x] (req:hookfix) context-budget: fable/mythos -> 1M window (shipped)
+- [ ] (req:anti-churn-regress) scripts/test-anti-churn.sh FAIL A on main (passes=1 blocked=NO) — no-progress breaker not tripping in test harness; pre-existing, diagnose+fix
