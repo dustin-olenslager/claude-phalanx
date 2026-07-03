@@ -23,7 +23,11 @@ const WARN_ONLY = process.env.PHALANX_WARN === '1';
 
 let input = {};
 try { input = JSON.parse(readStdin() || '{}'); } catch { allow(); }
-if (fs.existsSync(OFF)) allow();
+// .pipeline-off disables only the BLOCKING, never the flag WRITES below. pipeline-gate
+// is the single writer of the cross-pass verify flag (.claude-runs/verified.<branch>) that
+// loop-integrity-gate rule 5c reads; short-circuiting here starved 5c and deadlocked
+// automerge fleet-wide when .pipeline-off is set (observed 2026-07-02, /workspace/depona).
+const OFF_SET = fs.existsSync(OFF);
 
 const tool = input.tool_name || '';
 const ti = input.tool_input || {};
@@ -50,7 +54,7 @@ if (tool === 'Skill') {
 if (tool === 'Bash') {
   const cmd = (ti.command || '') + '';
   if (VERIFY_CMD.test(cmd)) markVerified();
-  if (/\bgit\b[^\n]*\bcommit\b/.test(cmd) && !hasFlag('verified')) {
+  if (!OFF_SET && /\bgit\b[^\n]*\bcommit\b/.test(cmd) && !hasFlag('verified')) {
     const msg = 'Pipeline gate (§13): commit blocked — no verify ran this session. Fix → run a test runner, `tsc --noEmit`, a lint (eslint/biome/ruff/golangci-lint/clippy), arch-enforce, or a Playwright E2E, then retry the commit. Override: touch ' + OFF + ' ("stop pipeline").';
     return WARN_ONLY ? out('allow', '⚠ ' + msg) : out('deny', msg);
   }
@@ -60,7 +64,7 @@ if (tool === 'Bash') {
 if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'NotebookEdit') {
   const fp = (ti.file_path || ti.notebook_path || '') + '';
   const isCode = H.CODE.test(fp) && !H.metaRe(HERE).test(fp);
-  if (isCode && !hasFlag('planned')) {
+  if (!OFF_SET && isCode && !hasFlag('planned')) {
     const msg = 'Pipeline gate (§13): code edit blocked — no plan/spec this session. Fix → run phased-plan / system-design / write-spec (or maintain-mode / optimize-loop, or adr for architecture), then retry the edit. Override: touch ' + OFF + ' ("stop pipeline").';
     return WARN_ONLY ? out('allow', '⚠ ' + msg) : out('deny', msg);
   }
