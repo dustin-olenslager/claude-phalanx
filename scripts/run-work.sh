@@ -286,17 +286,40 @@ while true; do
   # Wall-clock cap per pass (item 4): a hung `claude -p` must not block the
   # detached loop forever. `timeout` returns 124 on expiry -- treated as a
   # RECOVERABLE failure below (count it, notify, relaunch fresh), not a hard stop.
+  # resolve driver model: .phalanx-model file > PHALANX_MODEL env > (.phalanx-automodel→opus) > unset
+  PHALANX_MODEL_ID=""
+  if [ -f "${PRIMARY_TREE}/.phalanx-model" ]; then
+    _label=$(cat "${PRIMARY_TREE}/.phalanx-model" | tr -d '[:space:]')
+    case "$_label" in
+      opus)   PHALANX_MODEL_ID="claude-opus-4-8" ;;
+      sonnet) PHALANX_MODEL_ID="claude-sonnet-4-6" ;;
+      haiku)  PHALANX_MODEL_ID="claude-haiku-4-5-20251001" ;;
+      fable)  PHALANX_MODEL_ID="claude-fable-5" ;;
+    esac
+  elif [ -n "${PHALANX_MODEL:-}" ]; then
+    case "$PHALANX_MODEL" in
+      opus)   PHALANX_MODEL_ID="claude-opus-4-8" ;;
+      sonnet) PHALANX_MODEL_ID="claude-sonnet-4-6" ;;
+      haiku)  PHALANX_MODEL_ID="claude-haiku-4-5-20251001" ;;
+      fable)  PHALANX_MODEL_ID="claude-fable-5" ;;
+    esac
+  elif [ -f "${PRIMARY_TREE}/.phalanx-automodel" ]; then
+    PHALANX_MODEL_ID="claude-opus-4-8"
+  fi
+  MODEL_FLAG=""
+  [ -n "$PHALANX_MODEL_ID" ] && MODEL_FLAG="--model $PHALANX_MODEL_ID"
+
   set +e
   if command -v timeout >/dev/null 2>&1; then
     PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
       CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" GH_TOKEN="$GH_TOKEN_VAL" \
       env ${ACCESS_KV[@]+"${ACCESS_KV[@]}"} \
-      timeout "${PHALANX_PASS_TIMEOUT:-1800}s" claude -p "/work" $WT_FLAGS 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
+      timeout "${PHALANX_PASS_TIMEOUT:-1800}s" claude $MODEL_FLAG -p "/work" $WT_FLAGS 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
   else
     PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
       CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" GH_TOKEN="$GH_TOKEN_VAL" \
       env ${ACCESS_KV[@]+"${ACCESS_KV[@]}"} \
-      claude -p "/work" $WT_FLAGS 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
+      claude $MODEL_FLAG -p "/work" $WT_FLAGS 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
   fi
   set -e
 
