@@ -35,6 +35,11 @@ function windowForModel(model) {
   // file warns against). So it's OPT-IN: a deployment that enabled the 1M beta sets
   // PHALANX_OPUS_1M=1 in its session/hook env. Default stays the safe 200k.
   if (process.env.PHALANX_OPUS_1M === "1" && /opus-4/.test(m)) return 1000000;
+  // Fable/Mythos (Claude 5 tier) runs a 1M window by default -- a 200k assumption
+  // over-reads occupancy 5x and false-trips the ceiling on every pass (observed
+  // 2026-07-03: real 11% read as ~55%). Unlike opus-4 there is no 200k-default tier
+  // to protect, so 1M is the default; PHALANX_FABLE_1M=0 forces 200k if needed.
+  if (process.env.PHALANX_FABLE_1M !== "0" && /fable|mythos/.test(m)) return 1000000;
   // extend here for any model whose real window != 200k (keyed on the model id substring)
   return 200000;                                            // standard Claude window
 }
