@@ -116,6 +116,7 @@ fi
 # We invoke via `bash "$NOTIFY"` below, so the exec bit is irrelevant.
 NOTIFY="$HERE/notify.sh"; [ -f "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
+WIP_PRESERVE="$HERE/wip-preserve.sh"; [ -f "$WIP_PRESERVE" ] || WIP_PRESERVE="$CLAUDE_DIR/wip-preserve.sh"
 # Single source of truth for TASKS/PROGRESS parsing (mirrors the JS lib tasksState).
 TS_LIB="$HERE/tasks-state.sh"; [ -f "$TS_LIB" ] || TS_LIB="$CLAUDE_DIR/tasks-state.sh"
 # shellcheck source=/dev/null
@@ -288,8 +289,8 @@ while true; do
   # RECOVERABLE failure below (count it, notify, relaunch fresh), not a hard stop.
   # resolve driver model: .phalanx-model file > PHALANX_MODEL env > (.phalanx-automodel→opus) > unset
   PHALANX_MODEL_ID=""
-  if [ -f "${PRIMARY_TREE}/.phalanx-model" ]; then
-    _label=$(cat "${PRIMARY_TREE}/.phalanx-model" | tr -d '[:space:]')
+  if [ -f "$REPO/.phalanx-model" ]; then
+    _label=$(cat "$REPO/.phalanx-model" | tr -d '[:space:]')
     case "$_label" in
       opus)   PHALANX_MODEL_ID="claude-opus-4-8" ;;
       sonnet) PHALANX_MODEL_ID="claude-sonnet-4-6" ;;
@@ -303,7 +304,7 @@ while true; do
       haiku)  PHALANX_MODEL_ID="claude-haiku-4-5-20251001" ;;
       fable)  PHALANX_MODEL_ID="claude-fable-5" ;;
     esac
-  elif [ -f "${PRIMARY_TREE}/.phalanx-automodel" ]; then
+  elif [ -f "$REPO/.phalanx-automodel" ]; then
     PHALANX_MODEL_ID="claude-opus-4-8"
   fi
   MODEL_FLAG=""
@@ -323,10 +324,14 @@ while true; do
   fi
   set -e
 
-  # Remove the pass's worktree (non-interactive --worktree is not auto-cleaned). The work
-  # is already committed on its branch + landed to main by the orchestrator; --force drops
-  # the throwaway checkout. State files live at the primary root, so nothing is lost.
+  # Remove the pass's worktree (non-interactive --worktree is not auto-cleaned). A HAPPY
+  # pass committed + landed its work, but a pass that hit the context ceiling (or died)
+  # can leave real UNCOMMITTED files -- the verify gate forbids committing them on
+  # task/<slug>, and --force would destroy them (2026-07-03 fonto/JEX-P2 loss). Salvage
+  # first: wip-preserve stashes dirty state into the shared repo and records a WIP-STASH
+  # line in PROGRESS.md so the next pass restores it before resuming.
   if [ -n "$WT_NAME" ]; then
+    [ -f "$WIP_PRESERVE" ] && bash "$WIP_PRESERVE" "$REPO" "$REPO/.claude/worktrees/$WT_NAME" "pass $pass $stamp" >/dev/null 2>&1 || true
     git -C "$REPO" worktree remove --force "$REPO/.claude/worktrees/$WT_NAME" >/dev/null 2>&1 || true
     git -C "$REPO" worktree prune >/dev/null 2>&1 || true
   fi

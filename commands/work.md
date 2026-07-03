@@ -5,7 +5,7 @@ description: Start/resume the autonomous work loop. Reads PROGRESS.md (resume) t
 Autonomous mode. Drive work without asking me to pick tasks.
 
 ## Startup sequence
-1. If ./PROGRESS.md exists and contains a `RESPAWN` line or unfinished state: RESUME from it first. Read it, reconstruct where the last session stopped, clear the RESPAWN marker, continue that task before pulling a new one.
+1. If ./PROGRESS.md exists and contains a `RESPAWN` line or unfinished state: RESUME from it first. Read it, reconstruct where the last session stopped, clear the RESPAWN marker, continue that task before pulling a new one. If it contains a `WIP-STASH:` line, a prior pass's uncommitted work was salvaged to the shared stash — restore it (`git stash pop` the `phalanx-wip:` entry on the branch the line names, then delete the line) BEFORE writing any code; see the orchestrator's worktree rules.
 2. Read ./.claude-state.json. Missing → infer per §15 STEP 1 (empty repo→build/brainstorm; existing→ask maintain-or-optimize ONCE, write the file).
 3. Read TASKS.md at the repo root (`git rev-parse --show-toplevel`). If a concrete request came WITH this invocation, seed it: append `- [ ] (req:NEW) <request>` (create TASKS.md if missing), then proceed. Only on a BARE `/work` in a repo with no request and no TASKS.md: copy the template, tell me to fill it, and stop.
 
