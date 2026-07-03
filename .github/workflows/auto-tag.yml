@@ -1,0 +1,48 @@
+name: auto-tag
+# Recurrence guard: the self-update tracks the latest v* release TAG, not main. A
+# fix merged to main but never tagged never reaches installs (silently). This cuts
+# the next patch tag after every GREEN main build, so main is ALWAYS the released
+# version and the fleet auto-update can never lag behind committed fixes.
+#
+# Runs via workflow_run so it only fires AFTER ci succeeds -- never tags a red main.
+# A tag push does not itself trigger a branch push, and pushes made with the default
+# GITHUB_TOKEN do not spawn new workflow runs, so there is no tag loop.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - name: cut next patch tag if HEAD is untagged
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet
+          sha='${{ github.event.workflow_run.head_sha }}'
+          if git describe --exact-match --tags "$sha" >/dev/null 2>&1; then
+            echo "already tagged: $(git describe --exact-match --tags "$sha") -- nothing to do"
+            exit 0
+          fi
+          latest="$(git tag -l 'v*' --sort=-v:refname | head -1)"
+          latest="${latest:-v0.0.0}"
+          ver="${latest#v}"
+          maj="${ver%%.*}"; rest="${ver#*.}"; min="${rest%%.*}"; pat="${rest#*.}"
+          # guard against non-numeric patch (e.g. a -rc suffix): fall back to 0
+          case "$pat" in ''|*[!0-9]*) pat=0 ;; esac
+          new="v${maj}.${min}.$((pat + 1))"
+          echo "prev=$latest new=$new sha=$sha"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$new" "$sha" -m "auto-release $new: main is the released version (recurrence guard for tag-tracking auto-update)"
+          git push origin "$new"
