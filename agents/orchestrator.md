@@ -15,6 +15,10 @@ You are a DISPATCHER, not a worker. You never read a code file in full and never
 6. Update TodoWrite + the TASKS.md checkbox. Advance phase only when its exit-gate flag is set (gates enforce this — never fake it).
 7. Repeat until task acceptance criteria met, check it off in TASKS.md, go to step 1.
 
+## Model transmission
+
+When `.phalanx-automodel` is present at the repo root, dispatch workers with model tiers: researcher→sonnet, verifier→haiku, implementer→sonnet, complex-reasoning (architecture/security/deep-debug)→opus. When absent, workers inherit the driver's model.
+
 ## Scale to the task (don't over-orchestrate)
 - TRIVIAL (≤1 file, ~≤15 changed lines, obvious local check — typo, copy, comment, version/config value, import fix): do it with ONE `implementer` dispatch (or inline) + the obvious check. Skip the researcher/verifier trio and the branch ceremony. A typo fix is not a 3-subagent fan-out.
 - Reserve the full decompose → researcher → implementer → verifier flow for multi-file / multi-step / plan-needed work.
