@@ -49,10 +49,12 @@ cp "$HERE"/scripts/tasks-state.sh "$CLAUDE_DIR/" 2>/dev/null || true
 # request-scoped seed/unseed, and the Telegram bot hand-off entrypoint.
 cp "$HERE"/scripts/supervisord.sh "$HERE"/scripts/phalanx-watch.sh "$HERE"/scripts/notify.sh \
    "$HERE"/scripts/seed-task.sh "$HERE"/scripts/unseed-task.sh "$HERE"/scripts/bot-handoff.sh \
+   "$HERE"/scripts/wip-preserve.sh \
    "$CLAUDE_DIR/" 2>/dev/null || true
 cp "$HERE"/TASKS.template.md "$CLAUDE_DIR/" 2>/dev/null || true
 chmod +x "$CLAUDE_DIR"/run-work.sh "$CLAUDE_DIR"/supervisord.sh "$CLAUDE_DIR"/phalanx-watch.sh \
          "$CLAUDE_DIR"/notify.sh "$CLAUDE_DIR"/seed-task.sh "$CLAUDE_DIR"/unseed-task.sh "$CLAUDE_DIR"/bot-handoff.sh \
+         "$CLAUDE_DIR"/wip-preserve.sh \
          2>/dev/null || true
 
 echo "==> templates (state + dependency-cruiser + policy)"
