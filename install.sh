@@ -204,7 +204,24 @@ if command -v git >/dev/null 2>&1; then
   ( cd "$g2" && git init -q && git config user.email a@b.c && git config user.name a )
   printf "export const x = 1\n" > "$g2/ok.ts"; ( cd "$g2" && git add -A )
   o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$g2\",\"session_id\":\"sc\"}"); expect_allow "secret:commit-clean" x "$o"
-  rm -rf "$g" "$g2"
+
+  # cwd/cd-prefix mismatch: payload cwd points at the WRONG repo, real target is
+  # named in a `cd <dir> &&` prefix inside the command itself.
+  o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cd $g2 && git commit -m x\"},\"cwd\":\"$g\",\"session_id\":\"sc\"}"); expect_allow "secret:commit-cwd-cd-prefix-clean" x "$o"
+  o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cd $g && git commit -m x\"},\"cwd\":\"/tmp\",\"session_id\":\"sc\"}"); expect_deny "secret:commit-cwd-cd-prefix-leak" x "$o"
+
+  g3="/tmp/phalanx-secret-notrepo"; rm -rf "$g3"; mkdir -p "$g3"
+  o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$g3\",\"session_id\":\"sc\"}")
+  case "$o" in
+    *'"permissionDecision":"deny"'*)
+      case "$o" in
+        *"gitleaks flagged"*) echo "    FAIL secret:commit-notrepo-honest (mis-blamed gitleaks) got: $o"; FAIL=1;;
+        *"could not resolve a git repo"*) echo "    PASS secret:commit-notrepo-honest";;
+        *) echo "    FAIL secret:commit-notrepo-honest (no honest reason) got: $o"; FAIL=1;;
+      esac;;
+    *) echo "    FAIL secret:commit-notrepo-honest (expected deny) got: $o"; FAIL=1;;
+  esac
+  rm -rf "$g" "$g2" "$g3"
 else
   echo "    SKIP secret:commit-* (git not installed)"
 fi

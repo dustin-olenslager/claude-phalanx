@@ -51,19 +51,53 @@ function isSecretLine(line) {
 }
 function labelFor(line) { for (const [l, re] of RULES) if (re.test(line)) return l; return 'secret'; }
 
+// A `cd <dir> &&` chain or `git -C <dir>` prefix in the command targets a repo
+// other than the harness's own cwd (e.g. `cd /workspace/depona && git commit ...`
+// while the payload cwd is still /workspace) -- resolve the REAL target dir so
+// the scan runs where the commit actually happens, not wherever the hook fired.
+function resolveTargetCwd(cmd, payloadCwd) {
+  const dashC = cmd.match(/\bgit\s+-C\s+(\S+)/);
+  if (dashC) {
+    const dir = dashC[1].replace(/^['"]|['"]$/g, '');
+    return path.isAbsolute(dir) ? dir : path.resolve(payloadCwd, dir);
+  }
+  let cwd = payloadCwd;
+  for (const m of cmd.matchAll(/(?:^|&&)\s*cd\s+(\S+)\s*(?=&&|$)/g)) {
+    const dir = m[1].replace(/^['"]|['"]$/g, '');
+    cwd = path.isAbsolute(dir) ? dir : path.resolve(cwd, dir);
+  }
+  return cwd;
+}
+
 // ---- COMMIT-TIME ------------------------------------------------------------
 if (tool === 'Bash') {
   const cmd = (ti.command || '') + '';
   if (!/\bgit\b[^\n]*\bcommit\b/.test(cmd)) allow();
-  const cwd = input.cwd || process.cwd();
+  let cwd = resolveTargetCwd(cmd, input.cwd || process.cwd());
   const have = (bin) => { try { execSync('command -v ' + bin, { stdio: 'ignore' }); return true; } catch { return false; } };
+
+  // Resolve + validate the actual repo root before scanning anything. A git
+  // error here (not a work tree, unsupported flag on an old git, ...) is an
+  // honest "can't scan" condition -- NOT a leak finding, so report it as such
+  // and fail closed instead of misattributing it to gitleaks/trufflehog.
+  try {
+    cwd = execSync('git rev-parse --show-toplevel', { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' }).trim();
+  } catch (e) {
+    const o = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '');
+    return block('Secret-scan gate: could not resolve a git repo at ' + cwd + ' — blocking fail-closed (the secret scan cannot run).\n' + o.split('\n').slice(0, 6).join('\n') + '\nFix → run the commit from inside the intended repo, or check the `cd`/`-C` prefix. Override: touch ' + OFF + '.');
+  }
 
   // 1) gitleaks (preferred)
   if (have('gitleaks')) {
     try { execSync('gitleaks protect --staged --no-banner', { cwd, stdio: 'pipe' }); allow(); }
     catch (e) {
       const o = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '');
-      return block('Secret-scan gate: commit blocked — gitleaks flagged staged secrets.\n' + o.split('\n').slice(0, 12).join('\n') + '\nOverride: touch ' + OFF + '.');
+      // Only a genuine leak report blocks here; any other nonzero exit (git
+      // version mismatch, transient tool error, ...) falls through to the
+      // next layer instead of being mis-reported as "secrets found".
+      if (/leaks? found|leaks? detected|"RuleID"|"Description"/i.test(o)) {
+        return block('Secret-scan gate: commit blocked — gitleaks flagged staged secrets.\n' + o.split('\n').slice(0, 12).join('\n') + '\nOverride: touch ' + OFF + '.');
+      }
     }
   }
   // 2) trufflehog (best-effort; only a clean finding blocks)
@@ -75,11 +109,16 @@ if (tool === 'Bash') {
       // else: trufflehog errored for another reason -> fall through to regex.
     }
   }
-  // 3) regex fallback over the staged diff
+  // 3) regex fallback over the staged diff. cwd is already a validated repo
+  // root at this point, so a failure here is a genuine scan failure, not a
+  // missing repo -- fail closed with an honest reason rather than allow silently.
   let diff;
   try { diff = execSync('git diff --cached --unified=0', { cwd, encoding: 'utf8' }); }
-  catch { allow(); } // not a git repo / nothing staged
-  if (!diff) allow();
+  catch (e) {
+    const o = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '');
+    return block('Secret-scan gate: could not read the staged diff at ' + cwd + ' — blocking fail-closed (the secret scan cannot run).\n' + o.split('\n').slice(0, 6).join('\n') + '\nOverride: touch ' + OFF + '.');
+  }
+  if (!diff) allow(); // nothing staged
   const hits = [];
   let file = '?', line = 0;
   for (const raw of diff.split('\n')) {
