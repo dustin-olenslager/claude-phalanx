@@ -106,9 +106,15 @@ if (tool === 'Bash') {
     }
   }
   // 3) regex fallback over the staged diff
+  // "Nothing staged" never throws here (git exits 0 with empty stdout) -- that
+  // case is handled by the `if (!diff) allow()` below. A throw means the diff
+  // itself could not be read, which must fail closed, not silently allow.
   let diff;
   try { diff = execSync('git diff --cached --unified=0', { cwd: repo, encoding: 'utf8' }); }
-  catch { allow(); } // nothing staged / diff failed despite resolved work tree
+  catch (e) {
+    const o = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '');
+    return block('Secret-scan gate: commit blocked — could not read the staged diff for this commit (repo=' + repo + '), so it was NOT scanned. This is a diff-read failure, not a leak finding.\n' + o.split('\n').slice(0, 12).join('\n') + '\nFix → resolve the git error above, then re-stage and commit. Override: touch ' + OFF + '.');
+  }
   if (!diff) allow();
   const hits = [];
   let file = '?', line = 0;
