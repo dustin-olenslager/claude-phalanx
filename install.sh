@@ -222,7 +222,25 @@ if command -v git >/dev/null 2>&1; then
     *"flagged staged secrets"*) echo "    FAIL secret:commit-unresolvable-no-false-leak-claim (claimed secrets)"; FAIL=1;;
     *) echo "    PASS secret:commit-unresolvable-no-false-leak-claim";;
   esac
-  rm -rf "$g" "$g2" "$gout"
+  # diff-read failure with a RESOLVED repo (distinct from "nothing staged"): a
+  # corrupt .git/index still resolves via rev-parse --show-toplevel but makes
+  # `git diff --cached` itself throw. Must fail closed with an honest message,
+  # never an allow and never a false "gitleaks flagged" claim.
+  gcorrupt="/tmp/phalanx-secret-diffcorrupt"; rm -rf "$gcorrupt"; mkdir -p "$gcorrupt"
+  ( cd "$gcorrupt" && git init -q && git config user.email a@b.c && git config user.name a )
+  printf "export const x = 1\n" > "$gcorrupt/ok.ts"; ( cd "$gcorrupt" && git add -A )
+  head -c 200 /dev/urandom > "$gcorrupt/.git/index"
+  o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$gcorrupt\",\"session_id\":\"sc\"}")
+  expect_deny "secret:commit-diffread-fails-closed" x "$o"
+  case "$o" in
+    *"could not read the staged diff"*) echo "    PASS secret:commit-diffread-honest";;
+    *) echo "    FAIL secret:commit-diffread-honest (message must say diff could not be read) got: $o"; FAIL=1;;
+  esac
+  case "$o" in
+    *"flagged staged secrets"*) echo "    FAIL secret:commit-diffread-no-false-leak-claim (claimed secrets)"; FAIL=1;;
+    *) echo "    PASS secret:commit-diffread-no-false-leak-claim";;
+  esac
+  rm -rf "$g" "$g2" "$gout" "$gcorrupt"
 else
   echo "    SKIP secret:commit-* (git not installed)"
 fi
