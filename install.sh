@@ -204,7 +204,43 @@ if command -v git >/dev/null 2>&1; then
   ( cd "$g2" && git init -q && git config user.email a@b.c && git config user.name a )
   printf "export const x = 1\n" > "$g2/ok.ts"; ( cd "$g2" && git add -A )
   o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$g2\",\"session_id\":\"sc\"}"); expect_allow "secret:commit-clean" x "$o"
-  rm -rf "$g" "$g2"
+  # cwd-bug regression (2026-07-04): hook cwd OUTSIDE any work tree, repo reached via
+  # `cd <repo> &&` prefix. Clean repo must ALLOW (was a false "gitleaks flagged staged
+  # secrets" block); dirty repo must still DENY (cd-prefix resolution must not skip the scan).
+  gout="/tmp/phalanx-secret-outside"; rm -rf "$gout"; mkdir -p "$gout"
+  o=$(echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cd $g2 && git commit -m x\"},\"cwd\":\"$gout\",\"session_id\":\"sc\"}" | GIT_CEILING_DIRECTORIES=/tmp PHALANX_WARN='' node "$TG/secret-gate.js"); expect_allow "secret:commit-cd-prefix-clean" x "$o"
+  o=$(echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cd $g && git commit -m x\"},\"cwd\":\"$gout\",\"session_id\":\"sc\"}" | GIT_CEILING_DIRECTORIES=/tmp PHALANX_WARN='' node "$TG/secret-gate.js"); expect_deny "secret:commit-cd-prefix-dirty" x "$o"
+  # unresolvable repo: still fail-closed, but the message must say resolution failed,
+  # never claim a leak finding.
+  o=$(echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$gout\",\"session_id\":\"sc\"}" | GIT_CEILING_DIRECTORIES=/tmp PHALANX_WARN='' node "$TG/secret-gate.js")
+  expect_deny "secret:commit-unresolvable-denies" x "$o"
+  case "$o" in
+    *"could not resolve"*) echo "    PASS secret:commit-unresolvable-honest";;
+    *) echo "    FAIL secret:commit-unresolvable-honest (message must say resolution failed) got: $o"; FAIL=1;;
+  esac
+  case "$o" in
+    *"flagged staged secrets"*) echo "    FAIL secret:commit-unresolvable-no-false-leak-claim (claimed secrets)"; FAIL=1;;
+    *) echo "    PASS secret:commit-unresolvable-no-false-leak-claim";;
+  esac
+  # diff-read failure with a RESOLVED repo (distinct from "nothing staged"): a
+  # corrupt .git/index still resolves via rev-parse --show-toplevel but makes
+  # `git diff --cached` itself throw. Must fail closed with an honest message,
+  # never an allow and never a false "gitleaks flagged" claim.
+  gcorrupt="/tmp/phalanx-secret-diffcorrupt"; rm -rf "$gcorrupt"; mkdir -p "$gcorrupt"
+  ( cd "$gcorrupt" && git init -q && git config user.email a@b.c && git config user.name a )
+  printf "export const x = 1\n" > "$gcorrupt/ok.ts"; ( cd "$gcorrupt" && git add -A )
+  head -c 200 /dev/urandom > "$gcorrupt/.git/index"
+  o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$gcorrupt\",\"session_id\":\"sc\"}")
+  expect_deny "secret:commit-diffread-fails-closed" x "$o"
+  case "$o" in
+    *"could not read the staged diff"*) echo "    PASS secret:commit-diffread-honest";;
+    *) echo "    FAIL secret:commit-diffread-honest (message must say diff could not be read) got: $o"; FAIL=1;;
+  esac
+  case "$o" in
+    *"flagged staged secrets"*) echo "    FAIL secret:commit-diffread-no-false-leak-claim (claimed secrets)"; FAIL=1;;
+    *) echo "    PASS secret:commit-diffread-no-false-leak-claim";;
+  esac
+  rm -rf "$g" "$g2" "$gout" "$gcorrupt"
 else
   echo "    SKIP secret:commit-* (git not installed)"
 fi
