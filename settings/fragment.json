@@ -37,8 +37,18 @@
       {
         "matcher": "Skill|Bash|Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "node \"__CLAUDE_DIR__/pipeline-gate.js\"", "timeout": 10 },
-          { "type": "command", "command": "node \"__CLAUDE_DIR__/effect-ca-gate.js\"", "timeout": 10 },
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/pipeline-gate.js\"", "timeout": 10 }
+        ]
+      },
+      {
+        "matcher": "Skill|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/effect-ca-gate.js\"", "timeout": 10 }
+        ]
+      },
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
           { "type": "command", "command": "node \"__CLAUDE_DIR__/secret-gate.js\"", "timeout": 10 },
           { "type": "command", "command": "node \"__CLAUDE_DIR__/loop-integrity-gate.js\"", "timeout": 10 }
         ]
