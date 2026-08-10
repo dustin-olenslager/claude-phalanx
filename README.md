@@ -101,10 +101,20 @@ regex).
 ## Unattended autonomy (no-babysit)
 
 The loop is the default engine for code work: a coding request seeds itself as a
-task and the `orchestrator` drives it. When the driver session reaches the 45%
-context ceiling it **checkpoints to `PROGRESS.md` and stops** — and an external
-**supervisor** relaunches a fresh `claude -p "/work"` process that resumes from the
-checkpoint. No human ever runs `/clear`.
+task and the `orchestrator` drives it. When the driver session reaches the context
+ceiling (default 45%, env-tunable via `PHALANX_CTX_CEILING`) it **checkpoints to
+`PROGRESS.md` and stops** — and an external **supervisor** relaunches a fresh
+`claude -p "/work"` process that resumes from the checkpoint. No human ever runs `/clear`.
+
+On a runtime that exposes the native **Workflow** tool, the in-session
+decompose→implement→verify fan-out runs as a deterministic Workflow **pipeline**
+(each unit verifies the moment its implementation lands) instead of hand-rolled
+subagent dispatch — the gates, seed→verify→commit, and merge discipline are
+unchanged, and background workers auto-notify instead of being polled. The
+cross-session **supervisor** is unaffected: it exists to reset context across fresh
+processes, which a single in-session Workflow can't do. The context-budget hook
+also senses the **Claude 5 family** (opus-5 / sonnet-5 / fable-5 …) as a 1M-token
+window automatically, so a model upgrade never false-trips the ceiling.
 
 ```sh
 scripts/supervisord.sh start -r <repo>     # detached; drives the backlog to done/BLOCKED
@@ -233,6 +243,7 @@ so no bot tokens/infra leak in. An adapter only implements the port:
 - `touch ~/.claude/.secret-scan-off`   → disable secret scan
 - `export PHALANX_WARN=1`              → gates warn instead of hard-block (NOT 5c/5d merge gate)
 - `export PHALANX_NO_WORKTREE=1`       → run passes in the primary tree, no per-pass worktree
+- `export PHALANX_CTX_CEILING=0.6`     → raise/lower the checkpoint trigger (default `0.45`; `PHALANX_CTX_WARN` the early nudge, default `0.38`) — useful when native auto-compaction handles overflow
 - `touch <repo>/.phalanx-autorun`      → let the watcher drive this repo unattended
 - `touch <repo>/.phalanx-automerge`    → allow autonomous merge-on-green to `main`
 - caveman comms: say "stop caveman" / "normal mode"

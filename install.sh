@@ -383,6 +383,35 @@ rm -f "$CBDIR/PROGRESS.md"
 o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S4" "$CBDIR" | PHALANX_OPUS_1M=1 PHALANX_CTX_WINDOW=200000 node "$CBJ")
 case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:opus4-ctxwindow-overrides-optin";; *) echo "    FAIL cb:opus4-ctxwindow-overrides-optin got: $o"; FAIL=1;; esac
 
+# CLAUDE 5 FAMILY (opus-5 / sonnet-5, dated or not) is 1M-window NATIVE -- sensed WITHOUT the
+# opus-4 beta flag. Once the fleet moves off claude-opus-4-8 the loop must NOT false-trip: 150k
+# under a 5-family id -> 15% of 1M -> SILENT even with PHALANX_OPUS_1M unset.
+rm -f "$CBDIR/PROGRESS.md"
+S5="$CBDIR/sopus5.jsonl"; cbusage 2 150000 "claude-opus-5" > "$S5"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S5" "$CBDIR" | env -u PHALANX_OPUS_1M node "$CBJ")
+[ -z "$o" ] && echo "    PASS cb:opus5-native-1m" || { echo "    FAIL cb:opus5-native-1m got: $o"; FAIL=1; }
+rm -f "$CBDIR/PROGRESS.md"
+SS5="$CBDIR/ssonnet5.jsonl"; cbusage 2 150000 "claude-sonnet-5-20260115" > "$SS5"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$SS5" "$CBDIR" | env -u PHALANX_OPUS_1M node "$CBJ")
+[ -z "$o" ] && echo "    PASS cb:sonnet5-native-1m" || { echo "    FAIL cb:sonnet5-native-1m got: $o"; FAIL=1; }
+# haiku-4-5 is gen 4.5 (a "-4-5" infix, NOT a "-5" tier suffix) -> stays on the conservative
+# 200k default: 150k -> 75% -> CEILING. Guards against the regex mis-reading it as gen 5.
+rm -f "$CBDIR/PROGRESS.md"
+SH="$CBDIR/shaiku45.jsonl"; cbusage 2 150000 "claude-haiku-4-5-20251001" > "$SH"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$SH" "$CBDIR" | env -u PHALANX_OPUS_1M node "$CBJ")
+case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:haiku45-not-gen5-200k";; *) echo "    FAIL cb:haiku45-not-gen5-200k got: $o"; FAIL=1;; esac
+
+# CEILING/WARN are env-tunable (a deployment leaning on native auto-compaction can relax the
+# trigger); defaults 0.45/0.38 UNCHANGED. 150k under opus-5 = 15%: SILENT by default;
+# PHALANX_CTX_CEILING=0.10 (+WARN below it) makes that 15% TRIP; PHALANX_CTX_WARN=0.10 makes it
+# emit the under-ceiling headroom nudge instead of staying silent.
+rm -f "$CBDIR/PROGRESS.md"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S5" "$CBDIR" | env -u PHALANX_OPUS_1M PHALANX_CTX_CEILING=0.10 PHALANX_CTX_WARN=0.05 node "$CBJ")
+case "$o" in *"CONTEXT CEILING"*) echo "    PASS cb:ceiling-env-tunable";; *) echo "    FAIL cb:ceiling-env-tunable got: $o"; FAIL=1;; esac
+rm -f "$CBDIR/PROGRESS.md"
+o=$(printf '{"transcript_path":"%s","cwd":"%s"}' "$S5" "$CBDIR" | env -u PHALANX_OPUS_1M PHALANX_CTX_WARN=0.10 node "$CBJ")
+case "$o" in *"headroom remains"*) echo "    PASS cb:warn-env-tunable";; *) echo "    FAIL cb:warn-env-tunable got: $o"; FAIL=1;; esac
+
 # real high usage (~50% of 1M) trips. supervisor active -> defer msg, never "/clear".
 BIGTP="$CBDIR/t.jsonl"; { head -c 40000 /dev/zero | tr '\0' x; printf '\n'; cbusage 2 500000; } > "$BIGTP"
 rm -f "$CBDIR/PROGRESS.md"
