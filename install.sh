@@ -131,6 +131,25 @@ rm -rf "/tmp/phalanx-pipeline/$SID" "/tmp/phalanx-tsarch/$SID" 2>/dev/null || tr
 # assembled at runtime so no AWS-key-shaped literal ships in source (clean for downstream secret scanners)
 LEAK="AKIA""Z3QJ5K7N2WX4Y6PB"
 
+# HOOK MATCHER-SCOPING (2026-08-10 expert-panel decision, in lieu of a single-dispatcher):
+# PreToolUse hooks run in PARALLEL, so merging the 4 gates into one process saves CPU not
+# wall-clock (<1% of a model step) and would force a destructive settings migration + a risky
+# rewrite of the secret/loop-integrity gates. Instead, scope each gate's matcher to the tools it
+# actually acts on -- effect-ca no-ops on Bash, secret/loop-integrity no-op on Skill -- so those
+# events stop spawning a gate that would only allow(). Behavior-identical (the dropped tool x gate
+# combos were already no-ops); fewer concurrent node hooks on Skill/Bash. Assert the shape holds.
+node -e '
+const f=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+const groups=(f.hooks&&f.hooks.PreToolUse)||[];
+const matcherOf=(needle)=>{for(const g of groups)for(const h of (g.hooks||[]))if((h.command||"").includes(needle))return g.matcher||"";return null;};
+let ok=true;const chk=(name,m,mustHave,mustNot)=>{if(m==null){console.log("    FAIL scope:"+name+" (gate not wired)");ok=false;return;}for(const t of mustHave)if(!m.includes(t)){console.log("    FAIL scope:"+name+" missing "+t+" ("+m+")");ok=false;}for(const t of mustNot)if(m.includes(t)){console.log("    FAIL scope:"+name+" should not include "+t+" ("+m+")");ok=false;}};
+chk("pipeline",matcherOf("pipeline-gate.js"),["Skill","Bash","Edit"],[]);
+chk("effect-ca",matcherOf("effect-ca-gate.js"),["Skill","Edit"],["Bash"]);
+chk("secret",matcherOf("secret-gate.js"),["Bash","Edit"],["Skill"]);
+chk("loop-integrity",matcherOf("loop-integrity-gate.js"),["Bash","Edit"],["Skill"]);
+process.exit(ok?0:1);
+' "$HERE/settings/fragment.json" && echo "    PASS scope:matchers-scoped" || FAIL=1
+
 # Run gates from an isolated temp dir so live OFF-switch files (.pipeline-off etc.)
 # and the operator's runtime env don't skew the logic self-test.
 TG="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-tg)"; mkdir -p "$TG/lib"
