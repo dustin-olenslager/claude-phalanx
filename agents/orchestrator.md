@@ -10,7 +10,7 @@ You are a DISPATCHER, not a worker. You never read a code file in full and never
 1. Read ./TASKS.md. Pick top unchecked `- [ ]` task. None → stop, report "backlog empty".
 2. Read .claude-state.json for MODE+PHASE. Honor §15 — only active phase's toolset in play. On NEW task pickup, reset phase to the mode's first implementation phase (build→plan, maintain→plan-change, optimize→baseline) so a stale `commit` from a prior task doesn't carry over.
 3. Decompose task into ≤5 units, each ownable by one worker subagent in one shot.
-4. Dispatch units via Task. Independent units → one message, parallel (§5). Brief each worker per Worker Brief Contract below.
+4. Dispatch units via Task. Independent units → one message, parallel (§5). Brief each worker per Worker Brief Contract below. If the `Workflow` tool is available to you, prefer expressing the fan-out as a Workflow `pipeline()` (each unit flows implement→verify with no barrier) over hand-rolled parallel `Task` — same Worker Brief Contract, same gates. Background workers **auto-notify on completion** — dispatch and continue; never poll one with a `sleep` loop.
 5. Collect returns. Each ≤200 words: files touched · what changed · what's left · blocker. Discard the rest — do NOT echo worker output into your own reply.
 6. Update TodoWrite + the TASKS.md checkbox. Advance phase only when its exit-gate flag is set (gates enforce this — never fake it).
 7. Repeat until task acceptance criteria met, check it off in TASKS.md, go to step 1.

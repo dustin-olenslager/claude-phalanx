@@ -29,6 +29,16 @@ function windowForModel(model) {
   const m = String(model || "").toLowerCase();
   if (!m) return 200000;
   if (/1m|context-1m|\[1m\]/.test(m)) return 1000000;       // explicit 1M-context variant
+  // Claude 5 FAMILY (opus-5 / sonnet-5 / haiku-5 / fable-5 / mythos, and any later gen 6..9)
+  // ships a 1M-token window NATIVELY -- no context-1m beta flag, unlike the Opus 4.x era
+  // below. Sensing this is essential: once the fleet moves off claude-opus-4-8 to a real
+  // claude-opus-5 id, the `opus-4` flag branch stops matching and the 200k default under-reads
+  // occupancy 5x -> the ceiling false-trips every pass -> premature checkpoint/handoff stampede
+  // (the exact bug class patched repeatedly in 2026-07). Match the model-family "-<gen>" suffix
+  // for gen 5..9 so this NEVER needs editing again next generation. Note haiku-4-5 is gen 4.5
+  // (a "-4-5" infix, NOT a "-5" tier suffix) and correctly does NOT match here -- it keeps the
+  // conservative 200k default until a real haiku-5 ships.
+  if (/(?:opus|sonnet|haiku|fable|mythos)-[5-9](?:-|$)/.test(m)) return 1000000;
   // Opus 4.x CAN run a 1M window, but only behind the context-1m beta; the id carries no
   // "1m" marker so we can't sense it. Defaulting opus-4 -> 1M would UNDER-read 5x for every
   // user on the standard 200k window and never trip the ceiling (the exact failure this
@@ -43,8 +53,18 @@ function windowForModel(model) {
   // extend here for any model whose real window != 200k (keyed on the model id substring)
   return 200000;                                            // standard Claude window
 }
-const CEILING = 0.45;         // never exceed 45%
-const WARN = 0.38;            // early nudge to start wrapping the current unit
+// CEILING/WARN are the occupancy fractions that drive the checkpoint + early-nudge. Env-tunable
+// (PHALANX_CTX_CEILING / PHALANX_CTX_WARN, each a 0<f<=1 fraction) so a deployment relying on
+// native auto-compaction -- which summarizes context in-session instead of hard-failing at the
+// window edge -- can relax the checkpoint-and-relaunch trigger. Defaults UNCHANGED (0.45/0.38):
+// no behavior change unless a value is explicitly set.
+function envFrac(name, dflt) {
+  const v = parseFloat(process.env[name] || "");
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : dflt;
+}
+const CEILING = envFrac("PHALANX_CTX_CEILING", 0.45);   // never exceed 45% (env-tunable)
+const WARN = envFrac("PHALANX_CTX_WARN", 0.38);         // early nudge (env-tunable)
+const CEIL_PCT = (CEILING * 100).toFixed(0);            // for the operator-facing messages
 const ONESHOT = process.env.PHALANX_ONESHOT === "1";
 
 const readInput = H.readInput;
@@ -126,7 +146,7 @@ if (frac >= CEILING) {
   }
   if (SUP) {
     // The supervisor relaunches a fresh `claude -p` pass that reads PROGRESS.md.
-    emit(`CONTEXT CEILING HIT (~${pct}% >= 45%). Checkpoint remaining task state to PROGRESS.md NOW and STOP this pass -- the supervisor will relaunch a fresh pass that resumes from PROGRESS.md. No human action needed; do not tell anyone to reset context manually.`);
+    emit(`CONTEXT CEILING HIT (~${pct}% >= ${CEIL_PCT}%). Checkpoint remaining task state to PROGRESS.md NOW and STOP this pass -- the supervisor will relaunch a fresh pass that resumes from PROGRESS.md. No human action needed; do not tell anyone to reset context manually.`);
   }
   if (ONESHOT) {
     // A one-shot HOST (e.g. the Telegram bot) can still resume: it watches the agent's
@@ -135,14 +155,14 @@ if (frac >= CEILING) {
     // do NOT dead-end the work -- checkpoint and signal continuation. (Still no RESPAWN
     // marker here: the supervisor resumes from the checkpoint content, and a bare one-shot
     // with no host that understands <<CONTINUE>> simply ends, same as before.)
-    emit(`CONTEXT CEILING HIT (~${pct}% >= 45%) on a one-shot run. Checkpoint your remaining task state to PROGRESS.md NOW (enough for a fresh session to resume), do NOT start more work, and END your reply with the marker <<CONTINUE>> on its own line so the host hands the repo to a detached supervisor that finishes it across fresh passes.`);
+    emit(`CONTEXT CEILING HIT (~${pct}% >= ${CEIL_PCT}%) on a one-shot run. Checkpoint your remaining task state to PROGRESS.md NOW (enough for a fresh session to resume), do NOT start more work, and END your reply with the marker <<CONTINUE>> on its own line so the host hands the repo to a detached supervisor that finishes it across fresh passes.`);
   }
   // Bare interactive session: nudge to /clear ONCE (gated above); after that just
   // give the terse occupancy line so the instruction doesn't repeat every turn.
   if (alreadyNudged) {
-    emit(`Context ~${pct}% (over 45% ceiling). Already checkpointed -- STOP and resume with /work in a fresh session.`);
+    emit(`Context ~${pct}% (over ${CEIL_PCT}% ceiling). Already checkpointed -- STOP and resume with /work in a fresh session.`);
   }
-  emit(`CONTEXT CEILING HIT (~${pct}% >= 45%). Flush remaining task state to PROGRESS.md NOW, then STOP this session. Run /work in a fresh session to resume -- it reads PROGRESS.md first.`);
+  emit(`CONTEXT CEILING HIT (~${pct}% >= ${CEIL_PCT}%). Flush remaining task state to PROGRESS.md NOW, then STOP this session. Run /work in a fresh session to resume -- it reads PROGRESS.md first.`);
 }
 
-emit(`Context ~${pct}% — UNDER the 45% ceiling, headroom remains. KEEP WORKING: do NOT stop, and do NOT checkpoint-and-halt here. This is only a heads-up — wrap the CURRENT unit before opening a big NEW one, and prefer dispatching subagents over reading files yourself. ONLY a "CONTEXT CEILING HIT (>=45%)" message means stop; a WARN like this never does.`);
+emit(`Context ~${pct}% — UNDER the ${CEIL_PCT}% ceiling, headroom remains. KEEP WORKING: do NOT stop, and do NOT checkpoint-and-halt here. This is only a heads-up — wrap the CURRENT unit before opening a big NEW one, and prefer dispatching subagents over reading files yourself. ONLY a "CONTEXT CEILING HIT (>=${CEIL_PCT}%)" message means stop; a WARN like this never does.`);

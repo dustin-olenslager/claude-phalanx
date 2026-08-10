@@ -288,24 +288,28 @@ while true; do
   # detached loop forever. `timeout` returns 124 on expiry -- treated as a
   # RECOVERABLE failure below (count it, notify, relaunch fresh), not a hard stop.
   # resolve driver model: .phalanx-model file > PHALANX_MODEL env > (.phalanx-automodel→opus) > unset
+  # Map the tier LABEL to a stable `--model` ALIAS (opus|sonnet|haiku), NOT a pinned dated id:
+  # the alias auto-tracks the latest model of that tier, so the loop never rots a generation
+  # behind (the old map pinned claude-opus-4-8 / claude-sonnet-4-6 and silently aged). `fable`
+  # has no CLI alias, so it keeps its explicit current-gen id.
   PHALANX_MODEL_ID=""
   if [ -f "$REPO/.phalanx-model" ]; then
     _label=$(cat "$REPO/.phalanx-model" | tr -d '[:space:]')
     case "$_label" in
-      opus)   PHALANX_MODEL_ID="claude-opus-4-8" ;;
-      sonnet) PHALANX_MODEL_ID="claude-sonnet-4-6" ;;
-      haiku)  PHALANX_MODEL_ID="claude-haiku-4-5-20251001" ;;
+      opus)   PHALANX_MODEL_ID="opus" ;;
+      sonnet) PHALANX_MODEL_ID="sonnet" ;;
+      haiku)  PHALANX_MODEL_ID="haiku" ;;
       fable)  PHALANX_MODEL_ID="claude-fable-5" ;;
     esac
   elif [ -n "${PHALANX_MODEL:-}" ]; then
     case "$PHALANX_MODEL" in
-      opus)   PHALANX_MODEL_ID="claude-opus-4-8" ;;
-      sonnet) PHALANX_MODEL_ID="claude-sonnet-4-6" ;;
-      haiku)  PHALANX_MODEL_ID="claude-haiku-4-5-20251001" ;;
+      opus)   PHALANX_MODEL_ID="opus" ;;
+      sonnet) PHALANX_MODEL_ID="sonnet" ;;
+      haiku)  PHALANX_MODEL_ID="haiku" ;;
       fable)  PHALANX_MODEL_ID="claude-fable-5" ;;
     esac
   elif [ -f "$REPO/.phalanx-automodel" ]; then
-    PHALANX_MODEL_ID="claude-opus-4-8"
+    PHALANX_MODEL_ID="opus"
   fi
   MODEL_FLAG=""
   [ -n "$PHALANX_MODEL_ID" ] && MODEL_FLAG="--model $PHALANX_MODEL_ID"
