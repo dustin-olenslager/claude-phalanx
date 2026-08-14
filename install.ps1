@@ -29,6 +29,10 @@ Copy-Item -Recurse -Force (Join-Path $HERE 'skills\*') (Join-Path $CLAUDE_DIR 's
 Write-Host '==> hooks (anchors + gates -> CLAUDE_DIR root)'
 Copy-Item -Force (Join-Path $HERE 'hooks\anchors\*.sh') $CLAUDE_DIR
 Copy-Item -Force (Join-Path $HERE 'hooks\gates\*.js') $CLAUDE_DIR
+# Shared gate primitives. Gates require ./lib/phalanx-hook.js relative to their
+# own dir, so it MUST sit beside them at CLAUDE_DIR/lib/ (install.sh parity).
+New-Item -ItemType Directory -Force -Path (Join-Path $CLAUDE_DIR 'lib') | Out-Null
+Copy-Item -Force (Join-Path $HERE 'hooks\gates\lib\*.js') (Join-Path $CLAUDE_DIR 'lib')
 
 Write-Host '==> unified core (ADR-0004: core/ + adapters/ + CLI)'
 # The consolidation substrate: pure phase machine + model routing + memory.
