@@ -20,7 +20,11 @@ const readJson = (p, fallback) => {
 };
 
 const settings = readJson(settingsPath, {});
-const fragmentRaw = fs.readFileSync(fragmentPath, 'utf8').split('__CLAUDE_DIR__').join(claudeDir);
+// Normalize CLAUDE_DIR to forward slashes before substitution: the value lands
+// inside a JSON string literal, so raw backslashes (Windows paths) are invalid
+// escapes and break parse. Forward slashes are valid on every platform.
+const claudeDirFwd = claudeDir.replace(/\\/g, '/');
+const fragmentRaw = fs.readFileSync(fragmentPath, 'utf8').split('__CLAUDE_DIR__').join(claudeDirFwd);
 const fragment = JSON.parse(fragmentRaw);
 
 // --- object merges: existing wins ---
