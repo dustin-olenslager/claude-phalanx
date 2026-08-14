@@ -30,6 +30,26 @@ Write-Host '==> hooks (anchors + gates -> CLAUDE_DIR root)'
 Copy-Item -Force (Join-Path $HERE 'hooks\anchors\*.sh') $CLAUDE_DIR
 Copy-Item -Force (Join-Path $HERE 'hooks\gates\*.js') $CLAUDE_DIR
 
+Write-Host '==> unified core (ADR-0004: core/ + adapters/ + CLI)'
+# The consolidation substrate: pure phase machine + model routing + memory.
+# Copied as CommonJS so any harness requires it with zero install deps; the
+# scripts/ sibling keeps the CLI's relative requires (`../adapters/...`) valid.
+$CORE = Join-Path $CLAUDE_DIR 'phalanx-core'
+New-Item -ItemType Directory -Force -Path (Join-Path $CORE 'scripts') | Out-Null
+Copy-Item -Recurse -Force (Join-Path $HERE 'core') $CORE
+Copy-Item -Recurse -Force (Join-Path $HERE 'adapters') $CORE
+Copy-Item -Force (Join-Path $HERE 'scripts\phalanx-core.js') (Join-Path $CORE 'scripts')
+# Standalone launcher on PATH: a generated wrapper pointing at the installed
+# CLI (a plain copy would break its scripts/-relative requires).
+New-Item -ItemType Directory -Force -Path (Join-Path $CLAUDE_DIR 'bin') | Out-Null
+$wrapper = Join-Path $CLAUDE_DIR 'bin\phalanx-core.js'
+$installedCli = Join-Path $CORE 'scripts\phalanx-core.js'
+@"
+#!/usr/bin/env node
+// phalanx-core launcher (ADR-0004) - exec the installed composition root.
+require($(ConvertTo-Json $installedCli));
+"@ | Set-Content -Encoding utf8 $wrapper
+
 Write-Host '==> agents + commands + work-loop wrappers'
 New-Item -ItemType Directory -Force -Path (Join-Path $CLAUDE_DIR 'agents') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $CLAUDE_DIR 'commands') | Out-Null
@@ -61,6 +81,12 @@ if (Test-Path $SETTINGS) { Copy-Item -Force $SETTINGS "$SETTINGS.phalanx.bak" }
 node (Join-Path $HERE 'scripts\merge-settings.mjs') $SETTINGS (Join-Path $HERE 'settings\fragment.json') $CLAUDE_DIR
 
 Write-Host '==> validate'
+# unified core (ADR-0004): syntax-check every module + adapter, smoke the CLI.
+Get-ChildItem -Recurse -Path (Join-Path $CLAUDE_DIR 'phalanx-core') -Filter '*.js' |
+  Where-Object { $_.Name -notlike '*.test.js' } |
+  ForEach-Object { node --check $_.FullName; Write-Host "    node --check $($_.FullName -replace [regex]::Escape($CLAUDE_DIR), '') ok" }
+node (Join-Path $CLAUDE_DIR 'phalanx-core\scripts\phalanx-core.js') state --cwd $CLAUDE_DIR | Out-Null
+Write-Host '    phalanx-core CLI ok'
 foreach ($g in 'pipeline-gate','effect-ca-gate','secret-gate','loop-integrity-gate','context-budget','work-autostart','work-intent','work-respawn') {
   node --check (Join-Path $CLAUDE_DIR "$g.js"); Write-Host "    node --check $g.js ok"
 }
