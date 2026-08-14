@@ -74,6 +74,41 @@ echo '.claude-state.json' >> <project>/.gitignore     # machine-local; don't com
 `.claude-state.json` = `{ "mode": "build|maintain|optimize", "phase": "<id>", "flags": {} }`.
 `install.sh` also creates `MEMORY_DIR` (default `~/.claude/memory`) with a `MEMORY.md` index.
 
+## Unified core (ADR-0004)
+
+A pure, tool-agnostic **core + adapters** layer ships alongside the hooks — the
+same phase machine, model routing, and memory usable from Claude Code, opencode,
+or any future harness, with zero deps (CommonJS):
+
+```
+~/.claude/phalanx-core/
+├── core/          # pure, framework-free (no tool SDK imports)
+│   ├── domain/    # phase-machine (modes/phases/exit gates), state, memory-item
+│   ├── use-cases/ # brief, plan, execute, recall, migrate
+│   └── ports/     # model-router contract + pure routing policy
+├── adapters/      # concrete impls behind ports
+│   ├── models/router-policy.js   # quality|balanced|budget -> provider+model
+│   ├── memory/{jsonl,obsidian}.js# swappable memory stores
+│   └── state/fs.js               # .claude-state.json read/write
+└── scripts/phalanx-core.js       # composition root + CLI
+```
+
+Driving a project (any harness):
+
+```sh
+phalanx-core init --mode build --cwd <project>        # first phase
+phalanx-core next --cwd <project>                     # exit-gate check + advance
+phalanx-core plan --mode maintain                     # ordered phases + exit gates
+phalanx-core route --profile budget --mode build --phase implement
+phalanx-core recall "oauth" --cwd <project>           # memory query
+phalanx-core add-memory --name "Deploy Auth" --type project --summary "..."
+phalanx-core migrate --cwd <project>                  # collapse legacy state files
+```
+
+Tests: `node scripts/run-tests.js` (standalone `*.test.js`, zero framework).
+Changing models or adding a provider is an **adapter/config change** — core never
+edits.
+
 ## The model
 
 **Modes & phases** (`.claude-state.json`; the SessionStart `phase-anchor` injects ONLY
