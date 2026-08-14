@@ -38,6 +38,27 @@ chmod +x "$CLAUDE_DIR"/*.sh "$CLAUDE_DIR"/*.js 2>/dev/null || true
 # even when CLAUDE_DIR is custom or the checkout lives outside it.
 printf '%s\n' "$HERE" > "$CLAUDE_DIR/.phalanx-checkout"
 
+echo "==> unified core (ADR-0004: core/ + adapters/ -> CLAUDE_DIR/phalanx-core)"
+# The consolidation substrate: pure phase machine + model routing + memory,
+# as CommonJS so the harness (Claude Code / opencode / CLI) requires them with
+# zero install deps. Installed alongside the hooks; update via git pull + reinstall.
+mkdir -p "$CLAUDE_DIR/phalanx-core"
+cp -R "$HERE/core" "$CLAUDE_DIR/phalanx-core/"
+cp -R "$HERE/adapters" "$CLAUDE_DIR/phalanx-core/"
+# CLI keeps its repo layout (scripts/ sibling of core+adapters) so its
+# relative requires (`../adapters/...`) resolve identically installed.
+mkdir -p "$CLAUDE_DIR/phalanx-core/scripts"
+cp "$HERE/scripts/phalanx-core.js" "$CLAUDE_DIR/phalanx-core/scripts/"
+# Standalone harness: a thin PATH launcher over the installed CLI (the script
+# itself keeps its scripts/-relative requires; the launcher avoids a broken copy).
+mkdir -p "$CLAUDE_DIR/bin"
+cat > "$CLAUDE_DIR/bin/phalanx-core" <<EOF
+#!/usr/bin/env bash
+# phalanx-core launcher (ADR-0004) — exec the installed composition root.
+exec node "$CLAUDE_DIR/phalanx-core/scripts/phalanx-core.js" "\$@"
+EOF
+chmod +x "$CLAUDE_DIR/bin/phalanx-core" 2>/dev/null || true
+
 echo "==> agents + commands + work-loop wrappers"
 mkdir -p "$CLAUDE_DIR/agents" "$CLAUDE_DIR/commands"
 cp "$HERE"/agents/*.md "$CLAUDE_DIR/agents/"
@@ -110,6 +131,10 @@ node "$HERE/scripts/merge-settings.mjs" "$SETTINGS" "$HERE/settings/fragment.jso
 
 echo "==> validate (node --check + JSON parse)"
 node --check "$CLAUDE_DIR/lib/phalanx-hook.js" && echo "    node --check lib/phalanx-hook.js ok"
+# unified core (ADR-0004): syntax-check every module + adapter, run the suite.
+find "$CLAUDE_DIR/phalanx-core" -name '*.js' -not -name '*.test.js' -print0 2>/dev/null | \
+  while IFS= read -r -d '' m; do node --check "$m" && echo "    node --check ${m#$CLAUDE_DIR/} ok"; done
+node "$CLAUDE_DIR/phalanx-core/scripts/phalanx-core.js" state --cwd "$CLAUDE_DIR/phalanx-core" >/dev/null 2>&1 && echo "    phalanx-core CLI ok"
 for g in pipeline-gate effect-ca-gate secret-gate loop-integrity-gate context-budget work-autostart work-intent work-respawn; do
   node --check "$CLAUDE_DIR/$g.js" && echo "    node --check $g.js ok"
 done

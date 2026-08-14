@@ -31,6 +31,10 @@ Read <project>/.claude-state.json = {"mode":"build|maintain|optimize","phase":"<
   Write the chosen state.
 - WITH state: you are in that phase. Load ONLY the active phase's skill + the next phase's
   name. Do NOT pull guidance for phases you're not in — that is the whole point.
+- Cross-harness: the same machine lives in core/ (ADR-0004). Installed at
+  ~/.claude/phalanx-core/scripts/phalanx-core.js — `init`, `next`, `jump`, `plan`, `route`,
+  `recall`, `add-memory`, `migrate`. Hooks/claude and the CLI both read/write the one state
+  file; never hand-edit it.
 Phase advances when its exit-gate flag is set (STEP 2). Overrides: "/mode build|maintain|
 optimize", "/phase <id>", "/phase next". Modes + ordered phases:
   BUILD:    brainstorm → research → architecture → plan → design → implement → review →
