@@ -90,7 +90,10 @@ Write-Host '    phalanx-core CLI ok'
 foreach ($g in 'pipeline-gate','effect-ca-gate','secret-gate','loop-integrity-gate','context-budget','work-autostart','work-intent','work-respawn') {
   node --check (Join-Path $CLAUDE_DIR "$g.js"); Write-Host "    node --check $g.js ok"
 }
-node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' $SETTINGS
+# PS 5.1 native-arg quoting: embedded double quotes inside a single-quoted
+# string are mangled when passed to node, so the JS uses single quotes and the
+# outer PS string is double-quoted (no $ in the JS to interpolate).
+node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" $SETTINGS
 Write-Host '    ok'
 
 Write-Host '==> verify simulations'
