@@ -25,6 +25,31 @@ let input = {};
 try { input = JSON.parse(readStdin() || '{}'); } catch { allow(); }
 if (fs.existsSync(OFF)) allow();
 
+// §14 descoped to per-repo OPT-IN (2026-07-23): the always-on global hard-block was
+// ceremony-per-token that fought §9 (no premature abstraction) — it forced Effect+CleanArch
+// on throwaway scripts. Enforcement now applies ONLY inside a repo that opts in with a
+// `.ts-arch-on` marker (walk the edited file's dir tree, then the session cwd tree). This
+// check gates the Edit/Write BLOCK only — Skill flag-recording below still always runs so a
+// consulted skill is remembered for the opt-in repos. Global `.ts-arch-off` still force-off.
+function optedIn(fp) {
+  const starts = [];
+  if (fp) { try { starts.push(path.dirname(path.resolve(fp))); } catch {} }
+  if (input.cwd) starts.push(input.cwd);
+  starts.push(process.cwd());
+  for (const s of starts) {
+    let d = s;
+    try {
+      for (let i = 0; i < 40 && d; i++) {
+        if (fs.existsSync(path.join(d, '.ts-arch-on'))) return true;
+        const p = path.dirname(d);
+        if (p === d) break;
+        d = p;
+      }
+    } catch {}
+  }
+  return false;
+}
+
 const tool = input.tool_name || '';
 const ti = input.tool_input || {};
 const stateDir = H.stateDir('/tmp/phalanx-tsarch', input.session_id);
@@ -41,6 +66,7 @@ if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'Not
   const fp = (ti.file_path || ti.notebook_path || '') + '';
   const TS = H.TS;
   if (!(H.CODE.test(fp) && !H.metaRe(HERE).test(fp))) allow();
+  if (!optedIn(fp)) allow(); // per-repo opt-in: no `.ts-arch-on` in scope -> no enforcement
 
   const missing = [];
   if (!hasFlag('ca')) missing.push('clean-architecture — Fix → consult the skill, then retry: deps inward, business rules free of IO/frameworks, ports+adapters, DTO boundaries, one composition root; enforce at verify via arch-enforce.');
