@@ -121,6 +121,8 @@ node "$HERE/scripts/merge-claude-md.mjs" "$CLAUDE_DIR/CLAUDE.md" "$HERE/claude-m
 
 echo "==> settings.json (merge marketplaces + plugins + hooks)"
 [ -f "$SETTINGS" ] && cp "$SETTINGS" "$SETTINGS.phalanx.bak.$(date +%s 2>/dev/null || echo bak)" 2>/dev/null || true
+# Rotate: keep newest 5 backups (churn cap added 2026-07-23; was unbounded -> 148 files/1.2M).
+ls -t "$SETTINGS".phalanx.bak.* 2>/dev/null | tail -n +6 | xargs -r rm -f 2>/dev/null || true
 # Hook-command base path. If CLAUDE_DIR is the home default, write "$HOME/.claude"
 # so the hooks resolve in any container/user that mounts the same dir at a
 # different path (e.g. a shared mount). Override with PHALANX_HOOK_BASE.
@@ -205,13 +207,14 @@ for st in none build maintain optimize; do
   rm -rf "$d"
 done
 
-# effect-ca-gate
-o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/x.ts\"},\"session_id\":\"$SID\"}"); expect_deny "tsarch:ts-no-flags" x "$o"; expect_teach "tsarch:ts-no-flags" x "$o"
+# effect-ca-gate — per-repo OPT-IN (2026-07-23): enforce only inside a .ts-arch-on tree (via cwd)
+TSON="$TG/tson"; mkdir -p "$TSON"; : > "$TSON/.ts-arch-on"
+o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/x.ts\"},\"cwd\":\"$TSON\",\"session_id\":\"$SID\"}"); expect_deny "tsarch:ts-no-flags" x "$o"; expect_teach "tsarch:ts-no-flags" x "$o"
 fire effect-ca-gate.js "{\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"clean-architecture\"},\"session_id\":\"$SID\"}" >/dev/null
 fire effect-ca-gate.js "{\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"effect-ts\"},\"session_id\":\"$SID\"}" >/dev/null
-o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/x.ts\"},\"session_id\":\"$SID\"}"); expect_allow "tsarch:ts-after-skills" x "$o"
-o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/x.py\"},\"session_id\":\"phalanx-selftest2\"}"); expect_deny "tsarch:py-ca-only" x "$o"
-o=$(fire effect-ca-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$CLAUDE_DIR/skills/x/SKILL.md\"},\"session_id\":\"sx\"}"); expect_allow "tsarch:claudedir-exempt" x "$o"
+o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/x.ts\"},\"cwd\":\"$TSON\",\"session_id\":\"$SID\"}"); expect_allow "tsarch:ts-after-skills" x "$o"
+o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/x.py\"},\"cwd\":\"$TSON\",\"session_id\":\"phalanx-selftest2\"}"); expect_deny "tsarch:py-ca-only" x "$o"
+o=$(fire effect-ca-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$CLAUDE_DIR/skills/x/SKILL.md\"},\"cwd\":\"$TSON\",\"session_id\":\"sx\"}"); expect_allow "tsarch:claudedir-exempt" x "$o"
 
 # pipeline-gate
 o=$(fire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/y.go\"},\"session_id\":\"$SID\"}"); expect_deny "pipeline:code-no-plan" x "$o"; expect_teach "pipeline:code-no-plan" x "$o"
