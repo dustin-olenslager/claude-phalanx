@@ -65,7 +65,7 @@ wrong ones; don't store what repo/git/CLAUDE.md already records; absolute dates.
 
 ## §11 Skill discipline
 Skills are user-invoked — don't fire one the user didn't reference, EXCEPT the
-always-on gated ones (§13/§14/§15/§16) and caveman (§0).
+always-on gated ones (§13/§15/§16) and caveman (§0); §14 is per-repo opt-in.
 
 ## §12 Observability (always-on; precondition for OPTIMIZE)
 Structured logging + spans on every I/O boundary and use case from day one
@@ -92,8 +92,11 @@ Data.TaggedError over throw, Effect.Service/Layer DI, effect/Schema at
 boundaries, runPromise/runFork at ONE entrypoint; @effect/vitest + test Layers +
 fast-check). Python → Returns + Pydantic + import-linter. Kotlin/JVM → Arrow +
 ArchUnit. Rust/Go → native Result/errors-as-values + clippy/golangci-lint. Match
-the language; don't impose TS idioms. Override: "stop effect"/"stop clean-arch" →
-touch CLAUDE_DIR/.ts-arch-off.
+the language; don't impose TS idioms. ENFORCEMENT is per-repo OPT-IN: the
+ts-arch gate blocks edits ONLY inside a repo carrying a `.ts-arch-on` marker
+(walk-up from the edited file and the session cwd) — opt in where Effect + Clean
+Architecture are the product standard, skip it for throwaway scripts (fights §9).
+Global force-off: touch CLAUDE_DIR/.ts-arch-off.
 
 ## §15 Modes & phases (token-economy state machine)
 Read <project>/.claude-state.json {mode, phase, flags}. Load ONLY the active
