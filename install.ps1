@@ -111,10 +111,14 @@ foreach ($a in 'caveman-anchor','app-pipeline-anchor','ts-arch-anchor') {
   # .sh anchors require bash on Windows (git-bash/WSL); skip gracefully if absent
 }
 $sid = 'phalanx-ps'
-ExpectDeny  'tsarch:ts-no-flags'   (Fire 'effect-ca-gate.js' "{`"tool_name`":`"Edit`",`"tool_input`":{`"file_path`":`"/p/x.ts`"},`"session_id`":`"$sid`"}")
+# effect-ca-gate is per-repo OPT-IN (v1.7.17): run the sims from a temp cwd
+# carrying a .ts-arch-on marker so the deny paths actually engage.
+$tson = Join-Path $env:TEMP 'phalanx-tson'; New-Item -ItemType Directory -Force -Path $tson | Out-Null; New-Item -ItemType File -Force -Path (Join-Path $tson '.ts-arch-on') | Out-Null
+$cwdJson = ",`"cwd`":`"$($tson.Replace('\','/'))`""
+ExpectDeny  'tsarch:ts-no-flags'   (Fire 'effect-ca-gate.js' "{`"tool_name`":`"Edit`",`"tool_input`":{`"file_path`":`"/p/x.ts`"}$cwdJson,`"session_id`":`"$sid`"}")
 Fire 'effect-ca-gate.js' "{`"tool_name`":`"Skill`",`"tool_input`":{`"skill`":`"clean-architecture`"},`"session_id`":`"$sid`"}" | Out-Null
 Fire 'effect-ca-gate.js' "{`"tool_name`":`"Skill`",`"tool_input`":{`"skill`":`"effect-ts`"},`"session_id`":`"$sid`"}" | Out-Null
-ExpectAllow 'tsarch:ts-after-skills' (Fire 'effect-ca-gate.js' "{`"tool_name`":`"Edit`",`"tool_input`":{`"file_path`":`"/p/x.ts`"},`"session_id`":`"$sid`"}")
+ExpectAllow 'tsarch:ts-after-skills' (Fire 'effect-ca-gate.js' "{`"tool_name`":`"Edit`",`"tool_input`":{`"file_path`":`"/p/x.ts`"}$cwdJson,`"session_id`":`"$sid`"}")
 ExpectDeny  'pipeline:code-no-plan' (Fire 'pipeline-gate.js' "{`"tool_name`":`"Edit`",`"tool_input`":{`"file_path`":`"/p/y.go`"},`"session_id`":`"$sid`"}")
 $leak = 'AKIA' + 'Z3QJ5K7N2WX4Y6PB'   # assembled so no key-shaped literal ships
 ExpectDeny  'secret:write-aws-key'  (Fire 'secret-gate.js' "{`"tool_name`":`"Write`",`"tool_input`":{`"file_path`":`"/p/c.ts`",`"content`":`"const k='$leak'`"},`"session_id`":`"$sid`"}")
