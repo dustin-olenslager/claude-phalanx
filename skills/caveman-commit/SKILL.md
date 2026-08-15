@@ -20,7 +20,7 @@ Conventional Commits, caveman-trimmed. Commit BODIES are full English
 <body — only when the change's WHY is non-obvious. Wrap ~72 cols.
  Explain why, not what (the diff shows what).>
 
-<footer — BREAKING CHANGE: …, refs #123, Co-Authored-By: …>
+<footer — BREAKING CHANGE: …, refs #123>
 ```
 
 ## Types
@@ -33,8 +33,11 @@ feat · fix · refactor · perf · test · docs · build · ci · chore · rever
 - Body required for: non-obvious why, a tradeoff taken, a gotcha, a revert
   reason, anything an ADR-worthy decision touched.
 - Never invent scope; omit if unclear.
-- Respect the repo's existing footer conventions (sign-off, co-author, issue
-  refs) — read a few recent commits first if unsure.
+- Respect the repo's existing footer conventions (sign-off, issue refs) — read
+  a few recent commits first if unsure.
+- Never add Co-Authored-By trailers (Claude or any AI). Commit identity is
+  always Dustin Olenslager <dustin@joeybuilt.com> — verify git config before
+  committing.
 
 ## Process
 1. Read the staged diff (`git diff --cached --stat` then the hunks).
