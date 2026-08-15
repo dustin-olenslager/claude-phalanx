@@ -111,6 +111,12 @@ foreach ($a in 'caveman-anchor','app-pipeline-anchor','ts-arch-anchor') {
   # .sh anchors require bash on Windows (git-bash/WSL); skip gracefully if absent
 }
 $sid = 'phalanx-ps'
+# install.sh parity: clear the gate's per-session flag dir so a reinstall
+# (stale flags from a prior run) can't make ts-no-flags pass early. The gate
+# resolves '/tmp/phalanx-tsarch' drive-relative (node path.join), so use the
+# cwd's drive root.
+$tsarchBase = (Join-Path (Get-Location).Drive.Root 'tmp\phalanx-tsarch')
+Remove-Item -Recurse -Force (Join-Path $tsarchBase $sid) -ErrorAction SilentlyContinue
 # effect-ca-gate is per-repo OPT-IN (v1.7.17): run the sims from a temp cwd
 # carrying a .ts-arch-on marker so the deny paths actually engage.
 $tson = Join-Path $env:TEMP 'phalanx-tson'; New-Item -ItemType Directory -Force -Path $tson | Out-Null; New-Item -ItemType File -Force -Path (Join-Path $tson '.ts-arch-on') | Out-Null
