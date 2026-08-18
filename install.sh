@@ -199,7 +199,7 @@ done
 
 # phase-anchor MODE/PHASE for: no-state, build, maintain, optimize
 for st in none build maintain optimize; do
-  d="/tmp/phalanx-ps-$st"; rm -rf "$d"; mkdir -p "$d"
+  d="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-ps-$st.$$)"
   [ "$st" != "none" ] && cp "$HERE/state/$st.json" "$d/.claude-state.json"
   o=$(cd "$d" && "$CLAUDE_DIR/phase-anchor.sh")
   if echo "$o" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));const c=j.hookSpecificOutput.additionalContext||"";const m=process.argv[1];if(!c)process.exit(1);if(m!=="none"&&!c.includes("mode="+m))process.exit(1);if(m==="none"&&!/NO .claude-state/.test(c))process.exit(1);' "$st" 2>/dev/null; then
@@ -234,27 +234,27 @@ o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":
 
 # work-intent (UserPromptSubmit): speaks on code-intent, silent on read-only + under .work-off
 wi() { echo "$1" | node "$CLAUDE_DIR/work-intent.js"; }
-mkdir -p /tmp/phalanx-wi 2>/dev/null; rm -f /tmp/phalanx-wi/.work-off /tmp/phalanx-wi/TASKS.md
-o=$(wi "{\"prompt\":\"add a retry to the fetch call\",\"cwd\":\"/tmp/phalanx-wi\"}"); case "$o" in *Phalanx*) echo "    PASS intent:code-speaks";; *) echo "    FAIL intent:code-speaks got: $o"; FAIL=1;; esac
-o=$(wi "{\"prompt\":\"why is the test failing?\",\"cwd\":\"/tmp/phalanx-wi\"}"); [ -z "$o" ] && echo "    PASS intent:question-silent" || { echo "    FAIL intent:question-silent got: $o"; FAIL=1; }
-touch /tmp/phalanx-wi/.work-off
-o=$(wi "{\"prompt\":\"add a retry to the fetch call\",\"cwd\":\"/tmp/phalanx-wi\"}"); [ -z "$o" ] && echo "    PASS intent:work-off-silent" || { echo "    FAIL intent:work-off-silent got: $o"; FAIL=1; }
-rm -rf /tmp/phalanx-wi 2>/dev/null
+WI="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-wi.$$)"; rm -f "$WI/.work-off" "$WI/TASKS.md"
+o=$(wi "{\"prompt\":\"add a retry to the fetch call\",\"cwd\":\"$WI\"}"); case "$o" in *Phalanx*) echo "    PASS intent:code-speaks";; *) echo "    FAIL intent:code-speaks got: $o"; FAIL=1;; esac
+o=$(wi "{\"prompt\":\"why is the test failing?\",\"cwd\":\"$WI\"}"); [ -z "$o" ] && echo "    PASS intent:question-silent" || { echo "    FAIL intent:question-silent got: $o"; FAIL=1; }
+touch "$WI/.work-off"
+o=$(wi "{\"prompt\":\"add a retry to the fetch call\",\"cwd\":\"$WI\"}"); [ -z "$o" ] && echo "    PASS intent:work-off-silent" || { echo "    FAIL intent:work-off-silent got: $o"; FAIL=1; }
+rm -rf "$WI" 2>/dev/null
 
 # secret-gate COMMIT-TIME (needs git)
 if command -v git >/dev/null 2>&1; then
-  g="/tmp/phalanx-secret-dirty"; rm -rf "$g"; mkdir -p "$g"
+  g="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-secret-dirty.$$)"
   ( cd "$g" && git init -q && git config user.email a@b.c && git config user.name a )
   printf "const k='%s'\n" "$LEAK" > "$g/leak.ts"; ( cd "$g" && git add -A )
   o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$g\",\"session_id\":\"sc\"}"); expect_deny "secret:commit-staged-leak" x "$o"
-  g2="/tmp/phalanx-secret-clean"; rm -rf "$g2"; mkdir -p "$g2"
+  g2="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-secret-clean.$$)"
   ( cd "$g2" && git init -q && git config user.email a@b.c && git config user.name a )
   printf "export const x = 1\n" > "$g2/ok.ts"; ( cd "$g2" && git add -A )
   o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$g2\",\"session_id\":\"sc\"}"); expect_allow "secret:commit-clean" x "$o"
   # cwd-bug regression (2026-07-04): hook cwd OUTSIDE any work tree, repo reached via
   # `cd <repo> &&` prefix. Clean repo must ALLOW (was a false "gitleaks flagged staged
   # secrets" block); dirty repo must still DENY (cd-prefix resolution must not skip the scan).
-  gout="/tmp/phalanx-secret-outside"; rm -rf "$gout"; mkdir -p "$gout"
+  gout="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-secret-outside.$$)"
   o=$(echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cd $g2 && git commit -m x\"},\"cwd\":\"$gout\",\"session_id\":\"sc\"}" | GIT_CEILING_DIRECTORIES=/tmp PHALANX_WARN='' node "$TG/secret-gate.js"); expect_allow "secret:commit-cd-prefix-clean" x "$o"
   o=$(echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cd $g && git commit -m x\"},\"cwd\":\"$gout\",\"session_id\":\"sc\"}" | GIT_CEILING_DIRECTORIES=/tmp PHALANX_WARN='' node "$TG/secret-gate.js"); expect_deny "secret:commit-cd-prefix-dirty" x "$o"
   # unresolvable repo: still fail-closed, but the message must say resolution failed,
@@ -273,7 +273,7 @@ if command -v git >/dev/null 2>&1; then
   # corrupt .git/index still resolves via rev-parse --show-toplevel but makes
   # `git diff --cached` itself throw. Must fail closed with an honest message,
   # never an allow and never a false "gitleaks flagged" claim.
-  gcorrupt="/tmp/phalanx-secret-diffcorrupt"; rm -rf "$gcorrupt"; mkdir -p "$gcorrupt"
+  gcorrupt="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-secret-diffcorrupt.$$)"
   ( cd "$gcorrupt" && git init -q && git config user.email a@b.c && git config user.name a )
   printf "export const x = 1\n" > "$gcorrupt/ok.ts"; ( cd "$gcorrupt" && git add -A )
   head -c 200 /dev/urandom > "$gcorrupt/.git/index"

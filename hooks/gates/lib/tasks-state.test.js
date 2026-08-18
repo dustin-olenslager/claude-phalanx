@@ -28,7 +28,7 @@ assert.equal(H.riskLineOf("- [ ] safe work", "note: irreversible cutover ahead")
 assert.equal(H.riskLineOf("- [ ] safe", "all fine"), "");
 
 // blockedDirective: only an ACTIVE `BLOCKED:` halt directive -> true; mere prose/
-// tables/headers mentioning the word -> false (the nexalog false-halt fix).
+// tables/headers mentioning the word -> false (the false-halt fix).
 assert.equal(H.blockedDirective("### BLOCKED / skipped"), false);
 assert.equal(H.blockedDirective("| D2 | (BLOCKED — skipped) |"), false);
 assert.equal(H.blockedDirective("the 3 BLOCKED"), false);
