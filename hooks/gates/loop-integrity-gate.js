@@ -52,8 +52,16 @@ const tasksTxt = H.readRepoFile(cwd, "TASKS.md");
 if (!tasksTxt) allow();
 const open = H.openCount(tasksTxt);
 
-// Honor the kill switches -- an explicit stop means don't gate.
-if (H.killSwitched(cwd, HERE)) allow();
+// Kill switches. A GLOBAL stop ($CLAUDE_DIR/.work-off -- outside the agent-writable repo
+// tree) disables the whole gate. A REPO-LOCAL cwd/.work-off is honored for the DISCIPLINE
+// rules (5a edit-seed, 5b commit-verify) but MUST NOT disable the PROD-AUTHORITY rules
+// (5c/5d merge, 5e push): otherwise a loop agent could `touch .work-off` -- a plain Bash
+// call nothing blocks -- then merge/push to main, defeating the "non-bypassable" guarantee
+// (security audit 2026-08-17). So the prod-authority checks below run regardless of the
+// repo-local marker; only 5a/5b consult `repoStopped`.
+if (fs.existsSync(path.join(HERE, ".work-off"))) allow();
+let repoStopped = false;
+try { repoStopped = fs.existsSync(path.join(cwd, ".work-off")); } catch {}
 
 const tool = input.tool_name || "";
 const ti = input.tool_input || {};
@@ -122,7 +130,7 @@ if (tool === "Bash") {
     }
   }
 
-  if (/\bgit\b[^\n]*\bcommit\b/.test(cmd)) {
+  if (!repoStopped && /\bgit\b[^\n]*\bcommit\b/.test(cmd)) {
     const branch = H.currentBranch(cwd);
     // Cross-pass verify flag (written by pipeline-gate) OR a verify chained into this
     // same command -- either satisfies the gate without depending on hook ordering.
@@ -136,6 +144,7 @@ if (tool === "Bash") {
 }
 
 if (tool === "Edit" || tool === "Write" || tool === "MultiEdit" || tool === "NotebookEdit") {
+  if (repoStopped) allow();
   const fp = (ti.file_path || ti.notebook_path || "") + "";
   const isCode = H.CODE.test(fp) && !H.metaRe(HERE).test(fp);
   if (isCode && open === 0) {
