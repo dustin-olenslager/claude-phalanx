@@ -3,6 +3,15 @@
 .pipeline-off
 .ts-arch-off
 .secret-scan-off
+# real secret-bearing files — machine-local, NEVER commit (templates keep the .example suffix)
+.env
+.loop-access.env
+.loop-git-env
+.headless-env
+.hermes-git-env
+.git-credentials
+.credentials.json
+credentials.json
 *.phalanx.bak.*
 *.bak
 .DS_Store

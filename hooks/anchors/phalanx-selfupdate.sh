@@ -39,6 +39,15 @@ git fetch --tags --quiet origin 2>/dev/null || exit 0
 latest=$(git tag -l "v*" --sort=-v:refname 2>/dev/null | head -1)
 cur=$(git describe --tags --always 2>/dev/null)
 if [ -n "$latest" ] && [ "$latest" != "$cur" ]; then
+  # SECURITY NOTE (audit 2026-08-17): the tag about to be checked out + executed (install.sh)
+  # is REMOTE CODE. Anyone able to push a v* tag to origin would get code run under the
+  # operator's shell at the next session -- origin-push == RCE. To require a VALID signature on
+  # the release tag before trusting it, set PHALANX_REQUIRE_SIGNED_TAGS=1 and sign releases with
+  # `git tag -s`. Default (below) trusts unsigned tags -- UNCHANGED behavior, since not every
+  # install signs releases -- so the security is available opt-in without breaking auto-update.
+  if [ "${PHALANX_REQUIRE_SIGNED_TAGS:-0}" = "1" ] && ! git tag -v "$latest" >/dev/null 2>&1; then
+    exit 0  # signed tags required but this one isn't validly signed -> refuse (fail closed, silent)
+  fi
   git -c advice.detachedHead=false checkout --quiet "$latest" 2>/dev/null || exit 0
   CLAUDE_DIR="$CLAUDE_DIR" ./install.sh >/dev/null 2>&1 || true
 fi

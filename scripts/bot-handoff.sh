@@ -57,7 +57,7 @@ if [ "${#text}" -gt "$MAX_TEXT_LEN" ]; then
   text="${text:0:$MAX_TEXT_LEN}"
 fi
 
-id="$(bash "$SEED" "$repo" "$text" $reqid | tail -n1)"
+id="$(bash "$SEED" "$repo" "$text" ${reqid:+"$reqid"} | tail -n1)"
 # Always record this req id in pending-unseed BEFORE launching (item 2). If a
 # supervisor is already running, `supervisord.sh start` is a no-op and never sees
 # PHALANX_REQ_ID -- so that supervisor's own EXIT trap would never unseed THIS

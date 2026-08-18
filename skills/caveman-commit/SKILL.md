@@ -36,8 +36,8 @@ feat · fix · refactor · perf · test · docs · build · ci · chore · rever
 - Respect the repo's existing footer conventions (sign-off, issue refs) — read
   a few recent commits first if unsure.
 - Never add Co-Authored-By trailers (Claude or any AI). Commit identity is
-  always Dustin Olenslager <dustin@joeybuilt.com> — verify git config before
-  committing.
+  always the repo's configured git identity — verify `git config user.email`
+  before committing.
 
 ## Process
 1. Read the staged diff (`git diff --cached --stat` then the hunks).

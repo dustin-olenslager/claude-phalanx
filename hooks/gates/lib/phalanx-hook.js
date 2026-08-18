@@ -264,6 +264,11 @@ const PUSH_MAIN = /\bgit\b[^\n]*\bpush\b[^\n]*\b(main|master)\b/;
 // (e.g. checkpoint writes "git push origin main" into PROGRESS.md) does NOT false-fire.
 function stripQuotedContent(cmd) {
   var s = (cmd || "");
+  // Cap length before the backreference-based heredoc strip below: a lazy match with a
+  // backref (\1) can backtrack quadratically on a pathological multi-KB command carrying an
+  // unterminated <<WORD. Anything past this cap is only the literal-text false-positive this
+  // strip guards against, so truncating is safe here. (security audit 2026-08-17)
+  if (s.length > 20000) s = s.slice(0, 20000);
   // Remove heredoc bodies: <<WORD newline ... newline WORD (non-greedy, multiline)
   s = s.replace(/<<([A-Z_][A-Z0-9_]*)([^\n]*)\n[\s\S]*?\n\1\b/g, "<<HEREDOC");
   // Remove <<'WORD' heredocs
