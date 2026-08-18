@@ -8,11 +8,14 @@
  *                             (cwd TASKS.md exists but has 0 open '- [ ]' items).
  *   (b) verify-before-commit: block `git commit` on a task/<slug> branch unless a
  *                             verify/test ran green this pass (cross-pass flag).
- *   (c) merge-on-green       : block a merge INTO main unless the repo opted in
+ *   (c) merge-on-green       : for the UNATTENDED loop (PHALANX_SUPERVISOR/ONESHOT) only,
+ *                             block a merge INTO main unless the repo opted in
  *                             (.phalanx-automerge) AND the MERGED branch has a fresh
  *                             green verify flag. Non-bypassable (ignores PHALANX_WARN);
  *                             never merge on red. This is the only autonomous path to
- *                             prod authority -- default OFF, per-repo opt-in.
+ *                             prod authority -- default OFF, per-repo opt-in. An
+ *                             INTERACTIVE operator (e.g. /ship) IS the human review and is
+ *                             exempt; a DB-migration merge is downgraded to a warning.
  * Active ONLY in loop-managed repos -- cwd has a TASKS.md. Silent everywhere else,
  * so ordinary repos are untouched. Respects the .work-off kill switch (don't fight
  * an explicit stop). Warn-only under PHALANX_WARN=1 (bot); hard-block otherwise.
@@ -93,18 +96,28 @@ if (tool === "Bash") {
     const intoMain = br === "main" || br === "master" || H.CHECKOUT_MAIN.test(cmd);
     if (intoMain) {
       const root = H.repoRoot(cwd);
-      if (!H.autoMergeEnabled(cwd)) {
-        return out("deny", "Loop-integrity gate (item 5c): merge into main blocked -- autonomous merge is NOT enabled for this repo. Fix → open a PR for human review (push the task branch, `gh pr create`). To authorize autonomous merge for this repo, the operator creates the marker: `touch " + root + "/.phalanx-automerge` (default OFF; non-bypassable).");
-      }
       const src = H.mergedBranch(cmd);
-      if (!src || !H.verifyFlagFreshFor(cwd, src)) {
-        return out("deny", "Loop-integrity gate (item 5c): merge of '" + (src || "?") + "' into main blocked -- no GREEN verify recorded for that branch this pass. Fix → check out the task branch, run the build/test/lint/typecheck GREEN, then merge. NEVER merges on red (non-bypassable, ignores PHALANX_WARN).");
-      }
-      // (d) migration safety: a branch that adds/edits a DB migration must NOT auto-merge.
-      // Autonomous merge→deploy would ship code whose migration is not yet applied to prod
-      // (missing columns → 500s). prod-DB changes stay operator-gated. Non-bypassable.
-      if (H.branchTouchesMigration(cwd, src)) {
-        return out("deny", "Loop-integrity gate (item 5d): merge of '" + src + "' into main blocked -- it changes a DB migration. Autonomous merge+deploy would ship code whose migration is not yet applied to prod (500s). Fix → apply the migration to prod and sign off, then merge by hand (or open a PR). prod-DB changes are never auto-executed.");
+      // Scope the HARD prod-authority gate to the UNATTENDED loop (supervisor / one-shot),
+      // matching rule 5e's loopAgent guard above. An INTERACTIVE operator running /ship IS
+      // the human review -- blocking the operator's own merge was the over-reach. The
+      // autonomous path stays fully gated: opt-in marker + fresh GREEN verify + migration block.
+      if (loopAgent) {
+        if (!H.autoMergeEnabled(cwd)) {
+          return out("deny", "Loop-integrity gate (item 5c): autonomous merge into main blocked -- autonomous merge is NOT enabled for this repo. Fix → open a PR for human review (push the task branch, `gh pr create`). To authorize autonomous merge for this repo, the operator creates the marker: `touch " + root + "/.phalanx-automerge` (default OFF; non-bypassable). (Interactive operator /ship is exempt -- this fires only for the PHALANX_SUPERVISOR/ONESHOT loop.)");
+        }
+        if (!src || !H.verifyFlagFreshFor(cwd, src)) {
+          return out("deny", "Loop-integrity gate (item 5c): merge of '" + (src || "?") + "' into main blocked -- no GREEN verify recorded for that branch this pass. Fix → check out the task branch, run the build/test/lint/typecheck GREEN, then merge. NEVER merges on red (non-bypassable, ignores PHALANX_WARN).");
+        }
+        // (d) migration safety: a branch that adds/edits a DB migration must NOT auto-merge.
+        // Autonomous merge→deploy would ship code whose migration is not yet applied to prod
+        // (missing columns → 500s). prod-DB changes stay operator-gated. Non-bypassable.
+        if (H.branchTouchesMigration(cwd, src)) {
+          return out("deny", "Loop-integrity gate (item 5d): merge of '" + src + "' into main blocked -- it changes a DB migration. Autonomous merge+deploy would ship code whose migration is not yet applied to prod (500s). Fix → apply the migration to prod and sign off, then merge by hand (or open a PR). prod-DB changes are never auto-executed.");
+        }
+      } else if (src && H.branchTouchesMigration(cwd, src)) {
+        // INTERACTIVE operator: do NOT block the operator's own merge, but surface the
+        // prod-DB migration risk so the deploy step doesn't ship unapplied columns (500s).
+        return out("allow", "Loop-integrity gate (item 5d, interactive): heads up -- '" + src + "' changes a DB migration. Apply it to prod BEFORE you deploy, or you'll ship code whose columns don't exist yet (500s). Proceeding because you are driving interactively.");
       }
     }
   }
