@@ -98,7 +98,7 @@ if (tool === 'Bash') {
   }
   // 2) trufflehog (best-effort; only a clean finding blocks)
   if (have('trufflehog')) {
-    try { execSync('trufflehog --no-update git file://' + repo + ' --since-commit HEAD --fail --no-verification', { cwd: repo, stdio: 'pipe' }); /* no finding */ }
+    try { execFileSync('trufflehog', ['--no-update', 'git', 'file://' + repo, '--since-commit', 'HEAD', '--fail', '--no-verification'], { cwd: repo, stdio: 'pipe' }); /* no finding */ }
     catch (e) {
       const o = ((e.stdout && e.stdout.toString()) || '');
       if (/found|verified|detector/i.test(o)) return block('Secret-scan gate: commit blocked — trufflehog flagged staged secrets.\n' + o.split('\n').slice(0, 12).join('\n') + '\nFix → unstage the secret, move it to an env var / secret store, then re-stage and commit. Override: touch ' + OFF + '.');
