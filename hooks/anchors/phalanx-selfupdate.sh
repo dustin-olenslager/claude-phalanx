@@ -35,10 +35,12 @@ if command -v flock >/dev/null 2>&1; then flock -n 9 || exit 0; fi
 echo "$now" > "$STAMP" 2>/dev/null || true
 
 cd "$CO" || exit 0
-git fetch --tags --quiet origin 2>/dev/null || exit 0
+git fetch --tags --force --quiet origin 2>/dev/null || exit 0
 latest=$(git tag -l "v*" --sort=-v:refname 2>/dev/null | head -1)
-cur=$(git describe --tags --always 2>/dev/null)
-if [ -n "$latest" ] && [ "$latest" != "$cur" ]; then
+[ -n "$latest" ] || exit 0
+latest_sha=$(git rev-parse -q --verify "refs/tags/$latest^{commit}" 2>/dev/null)
+head_sha=$(git rev-parse -q --verify HEAD 2>/dev/null)
+if [ -n "$latest_sha" ] && [ "$latest_sha" != "$head_sha" ]; then
   # SECURITY NOTE (audit 2026-08-17): the tag about to be checked out + executed (install.sh)
   # is REMOTE CODE. Anyone able to push a v* tag to origin would get code run under the
   # operator's shell at the next session -- origin-push == RCE. To require a VALID signature on
@@ -48,7 +50,9 @@ if [ -n "$latest" ] && [ "$latest" != "$cur" ]; then
   if [ "${PHALANX_REQUIRE_SIGNED_TAGS:-0}" = "1" ] && ! git tag -v "$latest" >/dev/null 2>&1; then
     exit 0  # signed tags required but this one isn't validly signed -> refuse (fail closed, silent)
   fi
-  git -c advice.detachedHead=false checkout --quiet "$latest" 2>/dev/null || exit 0
+  git -c advice.detachedHead=false checkout -f --quiet "$latest" 2>/dev/null \
+    || git -c advice.detachedHead=false reset --hard --quiet "refs/tags/$latest" 2>/dev/null \
+    || exit 0
   CLAUDE_DIR="$CLAUDE_DIR" ./install.sh >/dev/null 2>&1 || true
 fi
 exit 0
