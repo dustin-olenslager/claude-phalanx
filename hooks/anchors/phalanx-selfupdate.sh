@@ -35,11 +35,16 @@ if command -v flock >/dev/null 2>&1; then flock -n 9 || exit 0; fi
 echo "$now" > "$STAMP" 2>/dev/null || true
 
 cd "$CO" || exit 0
-git fetch --tags --quiet origin 2>/dev/null || exit 0
+git fetch --tags --force --quiet origin 2>/dev/null || exit 0
 latest=$(git tag -l "v*" --sort=-v:refname 2>/dev/null | head -1)
-cur=$(git describe --tags --always 2>/dev/null)
-if [ -n "$latest" ] && [ "$latest" != "$cur" ]; then
-  git -c advice.detachedHead=false checkout --quiet "$latest" 2>/dev/null || exit 0
+[ -n "$latest" ] || exit 0
+latest_sha=$(git rev-parse -q --verify "refs/tags/$latest^{commit}" 2>/dev/null)
+head_sha=$(git rev-parse -q --verify HEAD 2>/dev/null)
+if [ -n "$latest_sha" ] && [ "$latest_sha" != "$head_sha" ]; then
+  # force past any dirty/diverged/detached state -- the tag is authoritative
+  git -c advice.detachedHead=false checkout -f --quiet "$latest" 2>/dev/null \
+    || git -c advice.detachedHead=false reset --hard --quiet "refs/tags/$latest" 2>/dev/null \
+    || exit 0
   CLAUDE_DIR="$CLAUDE_DIR" ./install.sh >/dev/null 2>&1 || true
 fi
 exit 0
