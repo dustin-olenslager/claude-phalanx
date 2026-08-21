@@ -48,6 +48,16 @@ else
   echo "    take over (restored on uninstall), or PHALANX_NO_GUARDS=1 to skip guards." >&2
 fi
 
+# On a shared mount a root-run pass writes git objects a non-root repo owner otherwise
+# cannot rewrite/gc; mark this repo group-shared so new objects stay group-writable and
+# any uid in the repo group coexists. Owner-agnostic + idempotent.
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$repo_root" ]; then
+  git -C "$repo_root" config core.sharedRepository group 2>/dev/null || true
+  chmod -R g+w "$repo_root/.git" 2>/dev/null || true
+  find "$repo_root/.git" -type d -exec chmod g+s {} + 2>/dev/null || true
+fi
+
 LW="$CLAUDE_DIR/.phalanx-leakwords"
 if [ ! -f "$LW" ]; then
   cat > "$LW" <<'EOF'

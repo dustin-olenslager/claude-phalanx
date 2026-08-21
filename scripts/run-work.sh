@@ -37,6 +37,16 @@ cd "$REPO"
 # never committed). Worktrees live under .claude/worktrees/ (the claude --worktree default).
 grep -qxF '.claude/worktrees/' "$REPO/.git/info/exclude" 2>/dev/null || echo '.claude/worktrees/' >> "$REPO/.git/info/exclude" 2>/dev/null || true
 
+# On a shared mount a root-run pass writes git objects a non-root repo owner otherwise
+# cannot rewrite/gc; a group-shared repo keeps new objects group-writable so any uid in
+# the repo group coexists. Idempotent -- re-applying is a no-op.
+ensure_shared_git() {
+  git -C "$1" config core.sharedRepository group 2>/dev/null || true
+  chmod -R g+w "$1/.git" 2>/dev/null || true
+  find "$1/.git" -type d -exec chmod g+s {} + 2>/dev/null || true
+}
+ensure_shared_git "$REPO"
+
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 
 # A detached/cron launch can hand run-work a PATH that has the standard bins but
@@ -339,6 +349,12 @@ while true; do
     git -C "$REPO" worktree remove --force "$REPO/.claude/worktrees/$WT_NAME" >/dev/null 2>&1 || true
     git -C "$REPO" worktree prune >/dev/null 2>&1 || true
   fi
+
+  # Belt-and-suspenders: if this pass ran as root on a shared mount, hand any
+  # freshly-created git objects back to the repo owner so the non-root owner can
+  # gc/rewrite them. Owner auto-detected; no-op (and harmless) when not root.
+  owner="$(stat -c %U "$REPO/.git" 2>/dev/null || true)"
+  [ -n "$owner" ] && chown -R "$owner" "$REPO/.git" 2>/dev/null || true
 
   if [ "$code" -eq 124 ]; then
     fails=$((fails + 1))
