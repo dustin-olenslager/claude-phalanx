@@ -57,7 +57,12 @@ fail=0
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$Z" ] && continue                       # branch deletion
   if [ "$remote_sha" = "$Z" ]; then
-    added=$(git log -p --no-color -n 300 "$local_sha" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')
+    # New branch: scan only what the remote does not already have. Scanning the whole
+    # branch history re-flags content that is already published -- on this repo that
+    # means the guard's own denylist fixtures in scripts/test-leak-guard.sh, so EVERY
+    # first push of a branch was rejected. `--not --remotes` excludes nothing when
+    # there are no remote-tracking refs, so a fresh clone still gets the full scan.
+    added=$(git log -p --no-color -n 300 "$local_sha" --not --remotes 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')
   else
     added=$(git diff --no-color "$remote_sha..$local_sha" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')
   fi
