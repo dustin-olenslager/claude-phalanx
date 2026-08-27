@@ -154,7 +154,10 @@ node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$CLAUD
 echo "==> verify simulations"
 FAIL=0
 SID="phalanx-selftest"
-rm -rf "/tmp/phalanx-pipeline/$SID" "/tmp/phalanx-tsarch/$SID" 2>/dev/null || true
+# clean the gate state via NODE, not the shell: native-Windows node resolves the literal
+# "/tmp/..." base to a different location than Git Bash's /tmp mount, so a shell rm would
+# miss it and a stale 'planned'/'verified' flag would survive and skew later cases.
+node -e 'const fs=require("fs");for(const b of ["/tmp/phalanx-pipeline","/tmp/phalanx-tsarch"])try{fs.rmSync(b,{recursive:true,force:true})}catch{}' 2>/dev/null || true
 # assembled at runtime so no AWS-key-shaped literal ships in source (clean for downstream secret scanners)
 LEAK="AKIA""Z3QJ5K7N2WX4Y6PB"
 
@@ -180,6 +183,14 @@ process.exit(ok?0:1);
 # Run gates from an isolated temp dir so live OFF-switch files (.pipeline-off etc.)
 # and the operator's runtime env don't skew the logic self-test.
 TG="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-tg)"; mkdir -p "$TG/lib"
+# node here may be native-Windows (Git Bash): it can't resolve an MSYS /tmp path handed
+# to it inside STDIN json -- argv paths get auto-converted, stdin ones do not, so a
+# fixture dir fed to a node hook as transcript_path/cwd is silently not-found and the
+# hook exits quiet, failing every positive self-test. mktd yields a temp dir in a form
+# BOTH the shell and native node resolve (cygpath -m = C:/... on Git Bash, plain mktemp
+# elsewhere). Use it for any fixture dir whose path is embedded in json piped to a node hook.
+jp()   { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }  # -> form native node + git report
+mktd() { jp "$(mktemp -d 2>/dev/null || echo /tmp/phalanx.$$)"; }
 # the gates require ./lib/phalanx-hook.js -- seed the temp dir with a sibling lib/.
 cp "$CLAUDE_DIR"/lib/*.js "$TG/lib/" 2>/dev/null || true
 for j in pipeline-gate effect-ca-gate secret-gate loop-integrity-gate context-budget work-autostart work-respawn; do
@@ -199,7 +210,7 @@ done
 
 # phase-anchor MODE/PHASE for: no-state, build, maintain, optimize
 for st in none build maintain optimize; do
-  d="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-ps-$st.$$)"
+  d="$(mktd)"
   [ "$st" != "none" ] && cp "$HERE/state/$st.json" "$d/.claude-state.json"
   o=$(cd "$d" && "$CLAUDE_DIR/phase-anchor.sh")
   if echo "$o" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));const c=j.hookSpecificOutput.additionalContext||"";const m=process.argv[1];if(!c)process.exit(1);if(m!=="none"&&!c.includes("mode="+m))process.exit(1);if(m==="none"&&!/NO .claude-state/.test(c))process.exit(1);' "$st" 2>/dev/null; then
@@ -208,7 +219,7 @@ for st in none build maintain optimize; do
 done
 
 # effect-ca-gate — per-repo OPT-IN (2026-07-23): enforce only inside a .ts-arch-on tree (via cwd)
-TSON="$TG/tson"; mkdir -p "$TSON"; : > "$TSON/.ts-arch-on"
+TSON="$(jp "$TG")/tson"; mkdir -p "$TSON"; : > "$TSON/.ts-arch-on"
 o=$(fire effect-ca-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/x.ts\"},\"cwd\":\"$TSON\",\"session_id\":\"$SID\"}"); expect_deny "tsarch:ts-no-flags" x "$o"; expect_teach "tsarch:ts-no-flags" x "$o"
 fire effect-ca-gate.js "{\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"clean-architecture\"},\"session_id\":\"$SID\"}" >/dev/null
 fire effect-ca-gate.js "{\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"effect-ts\"},\"session_id\":\"$SID\"}" >/dev/null
@@ -234,7 +245,7 @@ o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":
 
 # work-intent (UserPromptSubmit): speaks on code-intent, silent on read-only + under .work-off
 wi() { echo "$1" | node "$CLAUDE_DIR/work-intent.js"; }
-WI="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-wi.$$)"; rm -f "$WI/.work-off" "$WI/TASKS.md"
+WI="$(mktd)"; rm -f "$WI/.work-off" "$WI/TASKS.md"
 o=$(wi "{\"prompt\":\"add a retry to the fetch call\",\"cwd\":\"$WI\"}"); case "$o" in *Phalanx*) echo "    PASS intent:code-speaks";; *) echo "    FAIL intent:code-speaks got: $o"; FAIL=1;; esac
 o=$(wi "{\"prompt\":\"why is the test failing?\",\"cwd\":\"$WI\"}"); [ -z "$o" ] && echo "    PASS intent:question-silent" || { echo "    FAIL intent:question-silent got: $o"; FAIL=1; }
 touch "$WI/.work-off"
@@ -243,18 +254,18 @@ rm -rf "$WI" 2>/dev/null
 
 # secret-gate COMMIT-TIME (needs git)
 if command -v git >/dev/null 2>&1; then
-  g="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-secret-dirty.$$)"
+  g="$(mktd)"
   ( cd "$g" && git init -q && git config user.email a@b.c && git config user.name a )
   printf "const k='%s'\n" "$LEAK" > "$g/leak.ts"; ( cd "$g" && git add -A )
   o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$g\",\"session_id\":\"sc\"}"); expect_deny "secret:commit-staged-leak" x "$o"
-  g2="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-secret-clean.$$)"
+  g2="$(mktd)"
   ( cd "$g2" && git init -q && git config user.email a@b.c && git config user.name a )
   printf "export const x = 1\n" > "$g2/ok.ts"; ( cd "$g2" && git add -A )
   o=$(fire secret-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$g2\",\"session_id\":\"sc\"}"); expect_allow "secret:commit-clean" x "$o"
   # cwd-bug regression (2026-07-04): hook cwd OUTSIDE any work tree, repo reached via
   # `cd <repo> &&` prefix. Clean repo must ALLOW (was a false "gitleaks flagged staged
   # secrets" block); dirty repo must still DENY (cd-prefix resolution must not skip the scan).
-  gout="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-secret-outside.$$)"
+  gout="$(mktd)"
   o=$(echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cd $g2 && git commit -m x\"},\"cwd\":\"$gout\",\"session_id\":\"sc\"}" | GIT_CEILING_DIRECTORIES=/tmp PHALANX_WARN='' node "$TG/secret-gate.js"); expect_allow "secret:commit-cd-prefix-clean" x "$o"
   o=$(echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cd $g && git commit -m x\"},\"cwd\":\"$gout\",\"session_id\":\"sc\"}" | GIT_CEILING_DIRECTORIES=/tmp PHALANX_WARN='' node "$TG/secret-gate.js"); expect_deny "secret:commit-cd-prefix-dirty" x "$o"
   # unresolvable repo: still fail-closed, but the message must say resolution failed,
@@ -273,7 +284,7 @@ if command -v git >/dev/null 2>&1; then
   # corrupt .git/index still resolves via rev-parse --show-toplevel but makes
   # `git diff --cached` itself throw. Must fail closed with an honest message,
   # never an allow and never a false "gitleaks flagged" claim.
-  gcorrupt="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-secret-diffcorrupt.$$)"
+  gcorrupt="$(mktd)"
   ( cd "$gcorrupt" && git init -q && git config user.email a@b.c && git config user.name a )
   printf "export const x = 1\n" > "$gcorrupt/ok.ts"; ( cd "$gcorrupt" && git add -A )
   head -c 200 /dev/urandom > "$gcorrupt/.git/index"
@@ -299,7 +310,7 @@ echo "==> v1.4 no-babysit sims"
 # code paths like every gate). Run the $TG copy so HERE-based .work-off checks
 # can't read a live global switch.
 LIGG="$TG/loop-integrity-gate.js"
-LIGDIR="$HOME/.phalanx-lig-selftest"; rm -rf "$LIGDIR"; mkdir -p "$LIGDIR"
+LIGDIR="$(jp "$HOME")/.phalanx-lig-selftest"; rm -rf "$LIGDIR"; mkdir -p "$LIGDIR"
 # HERMETIC: the fixture must be its OWN repo and git must STOP at it. Without this,
 # when install.sh runs inside a surrounding git tree, the gate's repoRoot() (git
 # rev-parse) climbs OUT of a non-repo fixture into the host repo and reads the wrong
@@ -372,7 +383,7 @@ rm -rf "$LIGDIR"
 # root (so a pass in .claude/worktrees/* drains the same backlog), and code in a worktree
 # is still gated. Outside /tmp so metaRe's ^/tmp/ exclusion doesn't mask edit gating.
 if command -v git >/dev/null 2>&1; then
-  WTR="$HOME/.phalanx-wt-selftest"; rm -rf "$WTR"; mkdir -p "$WTR"
+  WTR="$(jp "$HOME")/.phalanx-wt-selftest"; rm -rf "$WTR"; mkdir -p "$WTR"
   # HERMETIC (same reason as the LIG block): halt git's repo discovery at the fixture's
   # parent so repoRoot() can't climb into a surrounding host repo when install.sh runs
   # inside one.
@@ -393,7 +404,7 @@ else echo "    SKIP worktree:* (git not installed)"; fi
 # item 4 context-budget: occupancy from the REAL usage signal (last transcript usage
 # line) + env-derived window (PHALANX_CTX_WINDOW, default ~1M) -- NOT raw byte size.
 CBJ="$TG/context-budget.js"
-CBDIR="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-cb)"; mkdir -p "$CBDIR"
+CBDIR="$(mktd)"; mkdir -p "$CBDIR"
 printf '# T\n- [ ] big\n' > "$CBDIR/TASKS.md"
 # one assistant transcript line whose usage = $1 input + $2 cache_read tokens.
 cbusage() { printf '{"type":"assistant","message":{"model":"%s","usage":{"input_tokens":%s,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":12}}}\n' "${3:-}" "$1" "$2"; }
@@ -494,13 +505,13 @@ rm -rf "$CBDIR"
 
 # item 4 work-respawn: supervisor active -> stop (empty, no block/continue).
 WRJ="$TG/work-respawn.js"
-WRDIR="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-wr)"; printf '# T\n- [ ] x\n' > "$WRDIR/TASKS.md"
+WRDIR="$(mktd)"; printf '# T\n- [ ] x\n' > "$WRDIR/TASKS.md"
 o=$(printf '{"cwd":"%s"}' "$WRDIR" | env -u PHALANX_ONESHOT PHALANX_SUPERVISOR=1 node "$WRJ"); [ -z "$o" ] && echo "    PASS respawn:sup-stops" || { echo "    FAIL respawn:sup-stops got: $o"; FAIL=1; }
 rm -rf "$WRDIR"
 
 # work-respawn AUTO-ESCALATE: a ceiling RESPAWN with NO live supervisor must launch
 # a detached supervisor (stubbed) and STOP -- never nag a human to /clear.
-WRDIR2="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-wr2)"; printf '# T\n- [ ] x\n' > "$WRDIR2/TASKS.md"
+WRDIR2="$(mktd)"; printf '# T\n- [ ] x\n' > "$WRDIR2/TASKS.md"
 printf '# P\n<!-- RESPAWN 2026 ctx~46%% -- checkpoint -->\n' > "$WRDIR2/PROGRESS.md"
 MARK="$WRDIR2/sup-launched"
 printf '#!/usr/bin/env bash\nprintf "%%s" "$*" > "%s"\n' "$MARK" > "$TG/supervisord.sh"; chmod +x "$TG/supervisord.sh"
@@ -510,7 +521,7 @@ rm -f "$TG/supervisord.sh"; rm -rf "$WRDIR2"
 
 # item 7 work-autostart: a risk-flagged open task trips; a safe task stays quiet.
 WAJ="$TG/work-autostart.js"
-WADIR="$(mktemp -d 2>/dev/null || echo /tmp/phalanx-wa)"
+WADIR="$(mktd)"
 printf '# T\n- [ ] do the migration cutover flip; facts wont be in memory_entries\n' > "$WADIR/TASKS.md"
 o=$(printf '{"cwd":"%s"}' "$WADIR" | node "$WAJ"); case "$o" in *data-risk*) echo "    PASS autostart:risk-trips";; *) echo "    FAIL autostart:risk-trips got: $o"; FAIL=1;; esac
 printf '# T\n- [ ] add a blue button\n' > "$WADIR/TASKS.md"
@@ -549,8 +560,17 @@ STUB
   # supervisor preflight needs a 0600 headless token; stub answers the auth marker.
   printf 'CLAUDE_CODE_OAUTH_TOKEN=stub\n' > "$SDIR/cd/.headless-env"; chmod 600 "$SDIR/cd/.headless-env"
   printf '# T\n- [ ] a -- ok\n- [ ] b -- ok\n' > "$SDIR/repo/TASKS.md"
-  PATH="$SDIR/bin:$PATH" CLAUDE_DIR="$SDIR/cd" bash "$RW" -r "$SDIR/repo" -m 6 -s 0 >/dev/null 2>&1 || true
-  if grep -Eq '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]' "$SDIR/repo/TASKS.md" 2>/dev/null; then echo "    FAIL supervisor:drains-backlog"; FAIL=1; else echo "    PASS supervisor:drains-backlog"; fi
+  # The supervisor's auth preflight requires the headless token at 0600 (reject a
+  # world-readable token). On Git Bash/Windows `chmod 600` does not stick (perms report
+  # 644, NTFS ACLs are the real boundary), so that Unix-perms preflight can't be satisfied
+  # here and the loop fails closed before it can drain -- an env limitation, not a bug.
+  # Skip like single-instance-flock when 0600 is unattainable.
+  if [ "$(stat -c %a "$SDIR/cd/.headless-env" 2>/dev/null)" != "600" ]; then
+    echo "    SKIP supervisor:drains-backlog (chmod 600 not honored here -> 0600 headless-token preflight unsatisfiable; Unix-perms env only)"
+  else
+    PATH="$SDIR/bin:$PATH" CLAUDE_DIR="$SDIR/cd" bash "$RW" -r "$SDIR/repo" -m 6 -s 0 >/dev/null 2>&1 || true
+    if grep -Eq '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\]' "$SDIR/repo/TASKS.md" 2>/dev/null; then echo "    FAIL supervisor:drains-backlog"; FAIL=1; else echo "    PASS supervisor:drains-backlog"; fi
+  fi
   # request-scoped: a fresh repo whose only task is the seed -> unseed removes the
   # whole file, so a later unrelated message can't re-arm the loop (item 6).
   RS="$SDIR/reqscoped"; mkdir -p "$RS"
@@ -639,7 +659,8 @@ case "$o" in
 esac
 rm -rf "$WDIR"
 
-rm -rf "/tmp/phalanx-pipeline" "/tmp/phalanx-tsarch" "$TG" 2>/dev/null || true
+node -e 'const fs=require("fs");for(const b of ["/tmp/phalanx-pipeline","/tmp/phalanx-tsarch"])try{fs.rmSync(b,{recursive:true,force:true})}catch{}' 2>/dev/null || true
+rm -rf "$TG" 2>/dev/null || true
 if [ "$FAIL" -ne 0 ]; then echo "==> SELF-TEST FAILED"; exit 1; fi
 
 # ---- optional daily auto-update cron ----------------------------------------
