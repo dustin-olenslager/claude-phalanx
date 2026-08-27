@@ -23,4 +23,16 @@ r=$(mkrepo "ip 10.0.0.1");      ck "public-universal-block" "$(run "$r" https://
 r=$(mkrepo "Plexo own name");        ck "public-ownname-allow"  "$(run "$r" https://github.com/owner/plexo.git)" 0; rm -rf "$r"
 r=$(mkrepo "acme note");        ck "phalanx-project-block" "$(run "$r" https://github.com/owner/claude-phalanx.git)" 1; rm -rf "$r"
 r=$(mkrepo "clean code");            ck "phalanx-clean-allow"   "$(run "$r" https://github.com/owner/claude-phalanx.git)" 0; rm -rf "$r"
+
+# A new branch must be scanned against what the remote already has, not against the
+# whole history: an already-published denylist term is not something this push adds.
+mkpublished() {
+  local d; d="$(mktemp -d)"
+  ( cd "$d" && git init -q && git config user.email a@b.c && git config user.name a \
+    && printf 'acme\n' > f.txt && git add f.txt && git commit -q -m published \
+    && git update-ref refs/remotes/origin/main HEAD \
+    && printf 'clean\n' > g.txt && git add g.txt && git commit -q -m new )
+  echo "$d"
+}
+r=$(mkpublished); ck "new-branch-skips-published" "$(run "$r" https://github.com/owner/claude-phalanx.git)" 0; rm -rf "$r"
 [ "$FAIL" = 0 ] && echo "ok: leak-guard 3-class logic" || exit 1
