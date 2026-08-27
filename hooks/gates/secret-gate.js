@@ -6,6 +6,11 @@
  *     block a hard-coded credential before it's even written.
  *  2. COMMIT-TIME (Bash `git commit`): scan the STAGED diff with gitleaks (then
  *     trufflehog) if installed, else a regex fallback; deny with file:line.
+ *     The trigger looks at the command that will RUN, not at data the command
+ *     carries: heredoc bodies are stripped first, so writing a script or document
+ *     that merely mentions these git words is not a commit. A commit dispatched to
+ *     another machine (ssh/docker exec/…) is allowed through -- there is no local
+ *     work tree to scan, so blocking it protects nothing and only stops the work.
  * SECURITY gate: ALWAYS hard-blocks. Unlike the discipline gates (pipeline,
  * loop-integrity) this does NOT honor PHALANX_WARN -- a leaked credential is not
  * a warn-able lint. The only off switch is <CLAUDE_DIR>/.secret-scan-off, which
@@ -67,6 +72,23 @@ function commitDir(cmd, cwd) {
   if (c) dir = c[2] || c[3] || c[1];
   return path.isAbsolute(dir) ? dir : path.resolve(cwd, dir);
 }
+// Heredoc bodies are DATA, never the command that runs. A `cat > f <<'EOF' … EOF`
+// whose text discusses committing is not a commit; scanning it produced false blocks
+// (2026-08-27). Strip the bodies before deciding whether this command invokes git.
+function stripHeredocs(cmd) {
+  return cmd.replace(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, '<<HEREDOC');
+}
+// The command text is read BEFORE the shell expands it, so `cd $REPO && git commit`
+// can never resolve to a real path here. That still has to fail closed, but the reason
+// is worth saying out loud -- it is a fixable authoring problem, not a broken repo.
+function hasUnexpandablePath(cmd) {
+  return /(?:\bcd\s+|\bgit\s+-C\s+)(?:"[^"]*[$`]|'[^']*[$`]|\S*[$`])/.test(cmd);
+}
+// A commit handed to another machine cannot have its staged diff read here. Blocking
+// it is a pure false positive: the gate protects the local index, and there isn't one.
+function isRemoteExec(cmd) {
+  return /(^|[;&|]|\s)(?:ssh|scp|docker\s+exec|podman\s+exec|kubectl\s+exec|vagrant\s+ssh)\b/.test(cmd);
+}
 // Work-tree root of dir, or null when dir is not inside one (never a false "cwd").
 function workTreeRoot(dir) {
   try {
@@ -78,12 +100,14 @@ function workTreeRoot(dir) {
 // ---- COMMIT-TIME ------------------------------------------------------------
 if (tool === 'Bash') {
   const cmd = (ti.command || '') + '';
-  if (!/\bgit\b[^\n]*\bcommit\b/.test(cmd)) allow();
+  const live = stripHeredocs(cmd);
+  if (!/\bgit\b[^\n]*\bcommit\b/.test(live)) allow();
+  if (isRemoteExec(live)) allow();
   const cwd = input.cwd || process.cwd();
-  const repo = workTreeRoot(commitDir(cmd, cwd));
+  const repo = workTreeRoot(commitDir(live, cwd));
   // Fail closed but HONEST: an unresolvable repo is a resolution failure, never a
   // leak finding. (A commit that dodges resolution would dodge the scan too.)
-  if (!repo) return block('Secret-scan gate: commit blocked — could not resolve the git work tree for this commit (cwd=' + cwd + '), so the staged diff was NOT scanned. This is a repo-resolution failure, not a leak finding. Fix → run the commit as `cd <repo> && git commit …` with a literal path (or from inside the repo) so the gate can scan it. Override: touch ' + OFF + '.');
+  if (!repo) return block('Secret-scan gate: commit blocked — could not resolve the git work tree for this commit (cwd=' + cwd + '), so the staged diff was NOT scanned. This is a repo-resolution failure, not a leak finding.' + (hasUnexpandablePath(live) ? ' The path is a shell variable or substitution, which this hook sees before the shell expands it - write the directory out in full.' : '') + ' Fix → run the commit as `cd <repo> && git commit …` with a literal path (or from inside the repo) so the gate can scan it. Override: touch ' + OFF + '.');
   const have = (bin) => { try { execSync('command -v ' + bin, { stdio: 'ignore' }); return true; } catch { return false; } };
 
   // 1) gitleaks (preferred). Only a real leak verdict blocks here; a git/gitleaks
