@@ -27,6 +27,19 @@ echo "==> skills"
 cp -R "$HERE/skills/." "$CLAUDE_DIR/skills/"
 
 echo "==> hooks (anchors + gates -> CLAUDE_DIR root)"
+# caveman-anchor.sh has TWO writers: this installer, and the claude-sync shared layer that
+# carries the operator's edits between machines. On 2026-08-31 sync landed a newer anchor
+# here (the REPLY BUDGET block, authored on the other node) that this installer would have
+# overwritten with its older shipped copy, leaving no trace. Never discard a divergent live
+# anchor silently -- the content is one line of prompt text, so losing it is invisible.
+for _a in "$HERE"/hooks/anchors/*.sh; do
+  _live="$CLAUDE_DIR/$(basename "$_a")"
+  if [ -f "$_live" ] && ! cmp -s "$_a" "$_live"; then
+    mkdir -p "$CLAUDE_DIR/backups/anchors"
+    cp -p "$_live" "$CLAUDE_DIR/backups/anchors/$(basename "$_a").$(date -u +%Y%m%dT%H%M%SZ).bak" 2>/dev/null || true
+    echo "    note: $(basename "$_a") differed from the shipped copy -> backed up under backups/anchors/"
+  fi
+done
 cp "$HERE"/hooks/anchors/*.sh "$CLAUDE_DIR/"
 cp "$HERE"/hooks/gates/*.js "$CLAUDE_DIR/"
 # Shared gate primitives. Gates require it as ./lib/phalanx-hook.js relative to
