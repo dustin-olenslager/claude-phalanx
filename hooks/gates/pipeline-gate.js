@@ -43,7 +43,7 @@ const { hasFlag, setFlag } = H.flagHelpers(stateDir);
 // green whether the suite passed, failed, or died at startup. The single writer is now
 // `phalanx-verify`, which records the child's exit code (see scripts/phalanx-verify).
 // This gate only READS the flag.
-const verified = () => H.verifyFlagFresh(cwd);
+const verified = (dir) => H.verifyFlagFresh(dir);
 const VERIFY_BIN = path.join(HERE, 'bin', 'phalanx-verify');
 
 const PLAN_SKILLS = /(phased-plan|system-design|write-spec|brainstorm|product-management|^adr$|adr-kit|deep-research|maintain-mode|optimize-loop|web-mobile-parity)/i;
@@ -56,7 +56,9 @@ if (tool === 'Skill') {
 
 if (tool === 'Bash') {
   const cmd = (ti.command || '') + '';
-  if (!OFF_SET && /\bgit\b[^\n]*\bcommit\b/.test(cmd) && !verified()) {
+  // Scan the command that RUNS, not its quoted data, and check the repo the command
+  // targets rather than whichever repo the session happens to sit in.
+  if (!OFF_SET && /\bgit\b[^\n]*\bcommit\b/.test(H.stripQuotedContent(cmd)) && !verified(H.effectiveCwd(cmd, cwd))) {
     const msg = 'Pipeline gate (§13): commit blocked — no verify exited 0 for this branch. Fix → re-run the check THROUGH the recorder so its exit code is what counts: `' + VERIFY_BIN + ' pnpm verify` (or the same wrapper around your test/typecheck/lint/e2e command), then retry the commit. Running the command bare no longer marks the branch green — only exit 0 through phalanx-verify does. Override: touch ' + OFF + ' ("stop pipeline").';
     return WARN_ONLY ? out('allow', '⚠ ' + msg) : out('deny', msg);
   }

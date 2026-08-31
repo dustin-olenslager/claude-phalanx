@@ -189,6 +189,26 @@ function repoRoot(cwd) {
     return cp.execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || cwd;
   } catch { return cwd; }
 }
+// The directory a Bash command will actually run git in. A hook receives the SESSION's
+// cwd, not the command's, so a `cd /other/repo && ...` prefix was gated against the
+// session repo -- wrong branch, wrong verify flag, a legitimate change blocked, and a
+// real one elsewhere able to slip. Honors a leading `cd <path> &&` and `git -C <path>`
+// (the two forms the loop actually emits). Falls back to the session cwd whenever the
+// path does not resolve to a directory, so this can only ever point the gate at a REAL
+// repo -- never at nothing.
+function effectiveCwd(cmd, cwd) {
+  const unquote = (v) => v.replace(/^['"]|['"]$/g, "");
+  const pats = [/\bgit\s+-C\s+('[^']+'|"[^"]+"|\S+)/, /^\s*cd\s+('[^']+'|"[^"]+"|[^\s&;|]+)\s*&&/];
+  for (const re of pats) {
+    const m = re.exec(cmd || "");
+    if (!m) continue;
+    const raw = unquote(m[1]);
+    const abs = path.isAbsolute(raw) ? raw : path.resolve(cwd || process.cwd(), raw);
+    try { if (fs.statSync(abs).isDirectory()) return abs; } catch {}
+  }
+  return cwd || process.cwd();
+}
+
 function currentBranch(cwd) {
   try {
     return cp.execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
@@ -359,7 +379,7 @@ module.exports = {
   blockedDirective, blockedLine,
   respawnActive, respawnPresent, riskLineOf, tasksState,
   stateDir, flagHelpers, metaRe,
-  repoRoot, currentBranch, markVerified, verifyFlagFresh, verifyFlagFreshFor,
+  repoRoot, currentBranch, effectiveCwd, markVerified, verifyFlagFresh, verifyFlagFreshFor,
   GIT_MERGE, CHECKOUT_MAIN, PUSH_MAIN, stripQuotedContent, mergedBranch, mergeCwdPath, autoMergeEnabled, deployScript,
   autorunEnabled, MIGRATION_PATH, pathsTouchMigration, branchTouchesMigration,
   CODE, TS, VERIFY_CMD,
