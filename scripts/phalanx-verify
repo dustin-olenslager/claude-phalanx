@@ -40,6 +40,16 @@ flag="$root/.claude-runs/verified.$safe"
 rundir="$root/.claude-runs/logs/$safe.$$"
 mkdir -p "$rundir" "$(dirname "$flag")" 2>/dev/null || true
 
+# .claude-runs/ is loop state, never repo content. Most repos ignore it already, but this
+# writes into ANY repo a verify runs in, so let the directory ignore itself rather than
+# leave untracked files behind in one that does not -- an untracked file is enough to make
+# a status read noisy and an "add everything" wrong.
+[ -f "$root/.claude-runs/.gitignore" ] || printf '*\n' > "$root/.claude-runs/.gitignore" 2>/dev/null || true
+
+# Prune run directories older than a week: one per verify per process, so an unattended
+# supervisor would otherwise grow them without bound.
+find "$root/.claude-runs/logs" -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
+
 echo "== phalanx-verify: $* (branch $branch)"
 TMPDIR="$rundir" "$@" 2>&1 | tee "$rundir/run.log"
 code=${PIPESTATUS[0]}
