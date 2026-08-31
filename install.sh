@@ -23,7 +23,25 @@ command -v node >/dev/null 2>&1 || { echo "FATAL: node is required (gates + merg
 echo "==> CLAUDE_DIR=$CLAUDE_DIR"
 mkdir -p "$CLAUDE_DIR/skills" "$CLAUDE_DIR/phalanx-templates/state"
 
+# Both skills/ and the anchors have TWO writers: this installer, and the claude-sync
+# shared layer that carries the operator's edits between machines. Whichever writes last
+# wins and the other's edit is gone with no trace -- which is how skills/caveman-commit
+# drifted into a standing sync conflict (2026-08-31) that reappeared after every install.
+# Never discard a divergent live file silently; leave a copy behind so the drift is
+# recoverable and visible.
+_preserve() {  # _preserve <shipped> <live>
+  [ -f "$2" ] || return 0
+  cmp -s "$1" "$2" && return 0
+  mkdir -p "$CLAUDE_DIR/backups/overwritten"
+  cp -p "$2" "$CLAUDE_DIR/backups/overwritten/$(basename "$2").$(date -u +%Y%m%dT%H%M%SZ).bak" 2>/dev/null || true
+  echo "    note: $(basename "$2") differed from the shipped copy -> backed up under backups/overwritten/"
+}
+
 echo "==> skills"
+for _s in "$HERE"/skills/*/SKILL.md; do
+  [ -f "$_s" ] || continue
+  _preserve "$_s" "$CLAUDE_DIR/skills/$(basename "$(dirname "$_s")")/SKILL.md"
+done
 cp -R "$HERE/skills/." "$CLAUDE_DIR/skills/"
 
 echo "==> hooks (anchors + gates -> CLAUDE_DIR root)"
@@ -33,12 +51,7 @@ echo "==> hooks (anchors + gates -> CLAUDE_DIR root)"
 # overwritten with its older shipped copy. Never discard a divergent live anchor without
 # leaving a copy behind -- the content is one line of prompt, and losing it is invisible.
 for _a in "$HERE"/hooks/anchors/*.sh; do
-  _live="$CLAUDE_DIR/$(basename "$_a")"
-  if [ -f "$_live" ] && ! cmp -s "$_a" "$_live"; then
-    mkdir -p "$CLAUDE_DIR/backups/anchors"
-    cp -p "$_live" "$CLAUDE_DIR/backups/anchors/$(basename "$_a").$(date -u +%Y%m%dT%H%M%SZ).bak" 2>/dev/null || true
-    echo "    note: $(basename "$_a") differed from the shipped copy -> backed up under backups/anchors/"
-  fi
+  _preserve "$_a" "$CLAUDE_DIR/$(basename "$_a")"
 done
 cp "$HERE"/hooks/anchors/*.sh "$CLAUDE_DIR/"
 cp "$HERE"/hooks/gates/*.js "$CLAUDE_DIR/"

@@ -69,7 +69,14 @@ function commitDir(cmd, cwd) {
   let m;
   while ((m = cdRe.exec(cmd)) && m.index < gi) dir = m[2] || m[3] || m[1];
   const c = /\bgit\s+-C\s+("([^"]*)"|'([^']*)'|[^\s;&|]+)\s+[^\n]*\bcommit\b/.exec(cmd);
-  if (c) dir = c[2] || c[3] || c[1];
+  // A relative -C path is relative to wherever a preceding `cd` already moved to, not to
+  // the session cwd the hook was handed. Resolving it against cwd sent the gate to a
+  // directory that does not exist, and it blocked the commit as unresolvable.
+  if (c) {
+    const rel = c[2] || c[3] || c[1];
+    const base = path.isAbsolute(dir) ? dir : path.resolve(cwd, dir);
+    dir = path.isAbsolute(rel) ? rel : path.resolve(base, rel);
+  }
   return path.isAbsolute(dir) ? dir : path.resolve(cwd, dir);
 }
 // Heredoc bodies are DATA, never the command that runs. A `cat > f <<'EOF' … EOF`
