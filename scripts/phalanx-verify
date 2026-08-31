@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# phalanx-verify — the ONLY writer of the loop's verify flag (.claude-runs/verified.<branch>).
+#
+# Why this exists (2026-08-31): the flag used to be written by pipeline-gate.js, a
+# PreToolUse hook — i.e. BEFORE the command ran. Merely typing `pnpm test` marked the
+# branch green, so a red suite, a typo'd command, or a runner that died at startup
+# (vitest 4 dropping `--reporter=basic` turns the whole run into a Startup Error) all
+# recorded as a green verify, and loop-integrity rule 5b/5c would then let the commit —
+# and an automerge — through. The gate flagged INTENT; nothing ever read an exit code.
+#
+# This wrapper records OUTCOME: the flag is written only on exit 0, and is DELETED on any
+# non-zero exit, so a failed verify actively revokes a previous green rather than leaving
+# it standing. Exit status is taken from the shell, not parsed out of log text, so no
+# output-format change in any test runner can make a failure read as success.
+#
+# It also isolates scratch: the child runs with TMPDIR pointed at a per-process run
+# directory under the repo, so two agents verifying concurrently cannot land temp files
+# or logs in each other's directory.
+#
+#   phalanx-verify pnpm verify
+#   phalanx-verify pnpm test
+#
+# Exits with the child's exit code, so it composes in && chains and CI alike.
+set -uo pipefail
+
+[ "$#" -gt 0 ] || { echo "phalanx-verify: usage: phalanx-verify <command> [args...]" >&2; exit 2; }
+
+# The SHARED repo root — identical from the primary checkout and from any linked worktree
+# under .claude/worktrees/*, so the flag a worktree writes is the flag the gate reads.
+root="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [ -n "$root" ]; then
+  root="${root%/.git/}"; root="${root%/.git}"
+else
+  root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo nobranch)"
+safe="$(printf '%s' "${branch:-nobranch}" | tr -c 'A-Za-z0-9_.-' '_')"
+flag="$root/.claude-runs/verified.$safe"
+rundir="$root/.claude-runs/logs/$safe.$$"
+mkdir -p "$rundir" "$(dirname "$flag")" 2>/dev/null || true
+
+echo "== phalanx-verify: $* (branch $branch)"
+TMPDIR="$rundir" "$@" 2>&1 | tee "$rundir/run.log"
+code=${PIPESTATUS[0]}
+
+if [ "$code" -eq 0 ]; then
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$flag" 2>/dev/null || true
+  echo "== phalanx-verify: GREEN (exit 0) — wrote $flag"
+else
+  rm -f "$flag" 2>/dev/null || true
+  echo "== phalanx-verify: RED (exit $code) — revoked $flag" >&2
+  echo "== last 30 lines ($rundir/run.log):" >&2
+  tail -30 "$rundir/run.log" >&2 2>/dev/null || true
+fi
+exit "$code"

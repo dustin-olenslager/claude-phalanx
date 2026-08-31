@@ -165,10 +165,13 @@ function flagHelpers(dir) {
 // the fix for the cross-pass verify bug: the old /tmp/<sid> key vanished on relaunch
 // and hard-blocked the pass-N+1 commit.
 //
-// SINGLE-WRITER contract: only pipeline-gate.js WRITES it (markVerified) -- on a
-// verify skill or a verify command. loop-integrity-gate.js only READS it
-// (verifyFlagFresh). Both gates fire on the same Bash event, so pipeline-gate's
-// write precedes loop-integrity's read within the turn.
+// SINGLE-WRITER contract: only `scripts/phalanx-verify` WRITES it, from the verified
+// command's EXIT CODE (0 -> write, non-zero -> delete). Both gates only READ it
+// (verifyFlagFresh). markVerified() below is that writer's helper shape, kept here so
+// the path logic lives with the readers; NO hook may call it. A PreToolUse hook fires
+// before the command runs, so anything it recorded would be intent, not outcome -- that
+// was the 2026-08-31 fail-open where `pnpm test` marked a branch green regardless of
+// whether the suite passed, failed, or died at startup.
 function repoRoot(cwd) {
   // The SHARED main repo root -- IDENTICAL from the primary checkout and from any linked
   // worktree under .claude/worktrees/*. Resolving via --git-common-dir (the .git dir all

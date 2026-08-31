@@ -58,6 +58,11 @@ cat > "$CLAUDE_DIR/bin/phalanx-core" <<EOF
 exec node "$CLAUDE_DIR/phalanx-core/scripts/phalanx-core.js" "\$@"
 EOF
 chmod +x "$CLAUDE_DIR/bin/phalanx-core" 2>/dev/null || true
+# phalanx-verify — the SINGLE writer of .claude-runs/verified.<branch>. It records the
+# child command's EXIT CODE; the gates only read the flag it leaves. Installed as a real
+# script (not a launcher) so it works from any cwd, worktree, or supervisor pass.
+cp "$HERE/scripts/phalanx-verify" "$CLAUDE_DIR/bin/phalanx-verify"
+chmod +x "$CLAUDE_DIR/bin/phalanx-verify" 2>/dev/null || true
 
 echo "==> agents + commands + work-loop wrappers"
 mkdir -p "$CLAUDE_DIR/agents" "$CLAUDE_DIR/commands"
@@ -231,13 +236,26 @@ o=$(fire effect-ca-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path
 o=$(fire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/y.go\"},\"session_id\":\"$SID\"}"); expect_deny "pipeline:code-no-plan" x "$o"; expect_teach "pipeline:code-no-plan" x "$o"
 fire pipeline-gate.js "{\"tool_name\":\"Skill\",\"tool_input\":{\"skill\":\"phased-plan\"},\"session_id\":\"$SID\"}" >/dev/null
 o=$(fire pipeline-gate.js "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/proj/src/y.go\"},\"session_id\":\"$SID\"}"); expect_allow "pipeline:code-after-plan" x "$o"
-o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"session_id\":\"phalanx-selftest3\"}"); expect_deny "pipeline:commit-no-verify" x "$o"; expect_teach "pipeline:commit-no-verify" x "$o"
-fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"pnpm test\"},\"session_id\":\"phalanx-selftest3\"}" >/dev/null
-o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"session_id\":\"phalanx-selftest3\"}"); expect_allow "pipeline:commit-after-verify" x "$o"
-fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"tsc --noEmit\"},\"session_id\":\"phalanx-tsc\"}" >/dev/null
-o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"session_id\":\"phalanx-tsc\"}"); expect_allow "pipeline:commit-after-tsc" x "$o"
-fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ruff check .\"},\"session_id\":\"phalanx-lint\"}" >/dev/null
-o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"session_id\":\"phalanx-lint\"}"); expect_allow "pipeline:commit-after-lint" x "$o"
+# The commit gate is OUTCOME-based: only `phalanx-verify` exiting 0 opens it. Until
+# 2026-08-31 this hook wrote the flag itself, on a PreToolUse event -- i.e. before the
+# command ran -- so a red suite, a typo, or a runner that died at startup (vitest 4
+# dropping --reporter=basic turns the run into a Startup Error) all recorded as green.
+# The RED and bare-command cases below are the regression guards for exactly that.
+if command -v git >/dev/null 2>&1; then
+  PVDIR="$(mktemp -d)"
+  ( cd "$PVDIR" && git init -q && git config user.email a@b.c && git config user.name a \
+      && git checkout -q -b task/pv && git commit -q --allow-empty -m i ) >/dev/null 2>&1
+  PVC="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$PVDIR\",\"session_id\":\"pv\"}"
+  o=$(fire pipeline-gate.js "$PVC"); expect_deny "pipeline:commit-no-verify" x "$o"; expect_teach "pipeline:commit-no-verify" x "$o"
+  ( cd "$PVDIR" && "$CLAUDE_DIR/bin/phalanx-verify" true ) >/dev/null 2>&1 || true
+  o=$(fire pipeline-gate.js "$PVC"); expect_allow "pipeline:commit-after-recorder-green" x "$o"
+  # phalanx-verify propagates the child's exit code by design, so `set -e` needs the guard.
+  ( cd "$PVDIR" && "$CLAUDE_DIR/bin/phalanx-verify" false ) >/dev/null 2>&1 || true
+  o=$(fire pipeline-gate.js "$PVC"); expect_deny "pipeline:commit-after-recorder-red" x "$o"
+  o=$(fire pipeline-gate.js "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"pnpm test\"},\"cwd\":\"$PVDIR\",\"session_id\":\"pv2\"}"); expect_allow "pipeline:bare-test-allowed" x "$o"
+  if [ -f "$PVDIR/.claude-runs/verified.task_pv" ]; then echo "    FAIL pipeline:bare-test-must-not-flag"; FAIL=1; else echo "    PASS pipeline:bare-test-must-not-flag"; fi
+  rm -rf "$PVDIR"
+fi
 
 # secret-gate WRITE-TIME
 o=$(fire secret-gate.js "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/proj/c.ts\",\"content\":\"const k='$LEAK'\"},\"session_id\":\"s\"}"); expect_deny "secret:write-aws-key" x "$o"; expect_teach "secret:write-aws-key" x "$o"
@@ -334,11 +352,14 @@ printf '# T\n- [ ] do it\n' > "$LIGDIR/TASKS.md"
 o=$(li "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$LIGDIR/x.js\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li1\"}"); expect_allow "loop:edit-after-seed" x "$o"
 if command -v git >/dev/null 2>&1; then
   ( cd "$LIGDIR" && git init -q && git config user.email a@b.c && git config user.name a && git checkout -q -b task/x && git commit -q --allow-empty -m i )
-  pg() { echo "$1" | PHALANX_WARN='' node "$TG/pipeline-gate.js"; }
   o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2\"}"); expect_deny "loop:commit-before-verify" x "$o"
-  # SINGLE WRITER: pipeline-gate records the cross-pass verify flag (repo+branch keyed
-  # under .claude-runs/), not loop-integrity. Verify under one session id...
-  pg "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2\"}" >/dev/null
+  # Regression guard (2026-08-31): rule 5b used to accept `|| VERIFY_CMD.test(cmd)`, which
+  # matched the COMMIT COMMAND ITSELF -- so a message containing verify/lint/test/e2e
+  # satisfied its own gate. Command text is never evidence that anything passed.
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m 'fix: verify the tree'\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2b\"}"); expect_deny "loop:commit-msg-cannot-self-authorize" x "$o"
+  # SINGLE WRITER: `phalanx-verify` records the cross-pass verify flag (repo+branch keyed
+  # under .claude-runs/) from the child's EXIT CODE. Neither gate writes it. Record a green...
+  ( cd "$LIGDIR" && "$CLAUDE_DIR/bin/phalanx-verify" true ) >/dev/null 2>&1 || true
   [ -f "$LIGDIR/.claude-runs/verified.task_x" ] && echo "    PASS loop:verify-flag-written" || { echo "    FAIL loop:verify-flag-written"; FAIL=1; }
   # ...then commit under a DIFFERENT session id (a fresh supervisor pass) still sees it.
   o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li3-freshpass\"}"); expect_allow "loop:commit-cross-pass-verify" x "$o"
