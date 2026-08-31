@@ -277,6 +277,13 @@ const VERIFY_CMD = /(playwright|\be2e\b|vitest|jest|flutter\s+test|pytest|\bgo\s
 // (which false-fired on `git checkout -b task/merge-x` and `git commit -m "...merge..."`).
 // Allows a leading `-C <path>` so the worktree-land form `git -C <main> merge` still gates.
 const GIT_MERGE = /\bgit\s+(?:-C\s+\S+\s+)?merge\b/;
+
+// The `commit` SUBCOMMAND specifically -- not the word anywhere after a git invocation.
+// The old /\bgit\b[^\n]*\bcommit\b/ matched a FILENAME later on the same line, so
+// `git describe --tags; grep -c x skills/caveman-commit/SKILL.md` was read as a commit
+// and blocked as unscannable. Same tightening GIT_MERGE already got, and it allows the
+// `-C <path>` / `-c <key=val>` prefixes the loop actually emits.
+const GIT_COMMIT = /\bgit\s+(?:-[cC]\s+\S+\s+)*commit\b/;
 // …whose TARGET is main: either we are already on main, or the same command line
 // checks out / switches to main first (the canonical `git checkout main && git merge`).
 const CHECKOUT_MAIN = /\bgit\b[^\n]*\b(checkout|switch)\b[^\n]*\b(main|master)\b/;
@@ -382,5 +389,5 @@ module.exports = {
   repoRoot, currentBranch, effectiveCwd, markVerified, verifyFlagFresh, verifyFlagFreshFor,
   GIT_MERGE, CHECKOUT_MAIN, PUSH_MAIN, stripQuotedContent, mergedBranch, mergeCwdPath, autoMergeEnabled, deployScript,
   autorunEnabled, MIGRATION_PATH, pathsTouchMigration, branchTouchesMigration,
-  CODE, TS, VERIFY_CMD,
+  CODE, TS, VERIFY_CMD, GIT_COMMIT,
 };
