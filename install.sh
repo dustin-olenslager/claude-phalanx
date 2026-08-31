@@ -27,11 +27,11 @@ echo "==> skills"
 cp -R "$HERE/skills/." "$CLAUDE_DIR/skills/"
 
 echo "==> hooks (anchors + gates -> CLAUDE_DIR root)"
-# caveman-anchor.sh has TWO writers: this installer, and the claude-sync shared layer that
-# carries the operator's edits between machines. On 2026-08-31 sync landed a newer anchor
-# here (the REPLY BUDGET block, authored on the other node) that this installer would have
-# overwritten with its older shipped copy, leaving no trace. Never discard a divergent live
-# anchor silently -- the content is one line of prompt text, so losing it is invisible.
+# caveman-anchor.sh has TWO writers: this installer and the claude-sync shared layer,
+# which distributes the operator's edits between machines. On 2026-08-31 sync landed a
+# newer anchor (the REPLY BUDGET block) that this installer would have silently
+# overwritten with its older shipped copy. Never discard a divergent live anchor without
+# leaving a copy behind -- the content is one line of prompt, and losing it is invisible.
 for _a in "$HERE"/hooks/anchors/*.sh; do
   _live="$CLAUDE_DIR/$(basename "$_a")"
   if [ -f "$_live" ] && ! cmp -s "$_a" "$_live"; then
@@ -370,12 +370,27 @@ if command -v git >/dev/null 2>&1; then
   # matched the COMMIT COMMAND ITSELF -- so a message containing verify/lint/test/e2e
   # satisfied its own gate. Command text is never evidence that anything passed.
   o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m 'fix: verify the tree'\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2b\"}"); expect_deny "loop:commit-msg-cannot-self-authorize" x "$o"
+  # Quoted DATA that merely contains the words must not fire the gate (same class as
+  # c9293ea for secret-gate): scan the command that runs, not what it carries.
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo 'remember to git commit later'\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2c\"}"); expect_allow "loop:quoted-data-does-not-fire" x "$o"
   # SINGLE WRITER: `phalanx-verify` records the cross-pass verify flag (repo+branch keyed
   # under .claude-runs/) from the child's EXIT CODE. Neither gate writes it. Record a green...
   ( cd "$LIGDIR" && "$CLAUDE_DIR/bin/phalanx-verify" true ) >/dev/null 2>&1 || true
   [ -f "$LIGDIR/.claude-runs/verified.task_x" ] && echo "    PASS loop:verify-flag-written" || { echo "    FAIL loop:verify-flag-written"; FAIL=1; }
   # ...then commit under a DIFFERENT session id (a fresh supervisor pass) still sees it.
   o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li3-freshpass\"}"); expect_allow "loop:commit-cross-pass-verify" x "$o"
+
+  # A hook receives the SESSION cwd, not the command's. With a fresh green flag for THIS
+  # repo's task/x, a commit aimed at a DIFFERENT repo (task/y, no verify) must still be
+  # denied -- previously the green flag here authorized a commit over there.
+  LIG2="$HOME/.phalanx-lig-selftest2"; rm -rf "$LIG2"; mkdir -p "$LIG2"
+  printf '# T\n- [ ] do it\n' > "$LIG2/TASKS.md"
+  ( cd "$LIG2" && git init -q && git config user.email a@b.c && git config user.name a \
+      && git checkout -q -b task/y && git commit -q --allow-empty -m i ) >/dev/null 2>&1
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cd $LIG2 && git commit -m x\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li4-crossrepo\"}")
+  expect_deny "loop:commit-gates-the-targeted-repo" x "$o"
+  case "$o" in *"commit on task/y"*) echo "    PASS loop:crossrepo-names-target-branch";; *) echo "    FAIL loop:crossrepo-names-target-branch (got: $o)"; FAIL=1;; esac
+  rm -rf "$LIG2"
 
   # ---- item 5c: merge-on-green into main (opt-in + green-or-deny, non-bypassable) ----
   # The repo here is on branch task/x with a fresh verified.task_x flag (written above).

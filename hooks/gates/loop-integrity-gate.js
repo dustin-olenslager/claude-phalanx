@@ -129,14 +129,20 @@ if (tool === "Bash") {
     }
   }
 
-  if (!repoStopped && /\bgit\b[^\n]*\bcommit\b/.test(cmd)) {
-    const branch = H.currentBranch(cwd);
+  // Scan the command that RUNS, not the data it carries: this tested the raw string, so a
+  // quoted argument merely CONTAINING the words fired the gate -- the same class c9293ea
+  // fixed in secret-gate. And resolve the repo the command actually targets: a hook is
+  // handed the SESSION cwd, so a `cd <other repo> && ...` prefix was gated against the
+  // wrong branch and read the wrong verify flag.
+  if (!repoStopped && /\bgit\b[^\n]*\bcommit\b/.test(H.stripQuotedContent(cmd))) {
+    const gcwd = H.effectiveCwd(cmd, cwd);
+    const branch = H.currentBranch(gcwd);
     // Cross-pass verify flag, written by `phalanx-verify` on a real exit 0 and DELETED on
     // any non-zero exit. The old `|| VERIFY_CMD.test(cmd)` escape hatch is gone: it matched
     // the COMMIT COMMAND ITSELF, so `git commit -m "fix: verify the tree"` (or any message
     // containing verify/lint/e2e/test) satisfied its own gate. Nothing about a command's
     // text is evidence that anything passed -- only an exit code is.
-    const verified = H.verifyFlagFresh(cwd);
+    const verified = H.verifyFlagFresh(gcwd);
     if (/^task\//.test(branch) && !verified) {
       const msg = "Loop-integrity gate (item 5b): commit on " + branch + " blocked -- no verify/test exited 0 for this branch. Fix → run it through the recorder so the exit code is what counts: `" + require('path').join(HERE,'bin','phalanx-verify') + " pnpm verify` (or the same wrapper around your build/test/lint/typecheck command), then retry. A bare run, or a verify word in the commit message, no longer counts (independent of .pipeline-off).";
       return WARN_ONLY ? out("allow", "WARN " + msg) : out("deny", msg);
