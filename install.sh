@@ -386,6 +386,10 @@ if command -v git >/dev/null 2>&1; then
   # Quoted DATA that merely contains the words must not fire the gate (same class as
   # c9293ea for secret-gate): scan the command that runs, not what it carries.
   o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo 'remember to git commit later'\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2c\"}"); expect_allow "loop:quoted-data-does-not-fire" x "$o"
+  # `commit` must match as a SUBCOMMAND, not as the word anywhere after a git invocation:
+  # a path like skills/caveman-commit/SKILL.md on a line beginning `git describe` was read
+  # as a commit and blocked. Same tightening GIT_MERGE already carries.
+  o=$(li "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git describe --tags; grep -c x skills/caveman-commit/SKILL.md\"},\"cwd\":\"$LIGDIR\",\"session_id\":\"li2d\"}"); expect_allow "loop:commit-in-a-path-is-not-a-commit" x "$o"
   # SINGLE WRITER: `phalanx-verify` records the cross-pass verify flag (repo+branch keyed
   # under .claude-runs/) from the child's EXIT CODE. Neither gate writes it. Record a green...
   ( cd "$LIGDIR" && "$CLAUDE_DIR/bin/phalanx-verify" true ) >/dev/null 2>&1 || true

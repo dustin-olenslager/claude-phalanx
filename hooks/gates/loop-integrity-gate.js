@@ -134,7 +134,7 @@ if (tool === "Bash") {
   // fixed in secret-gate. And resolve the repo the command actually targets: a hook is
   // handed the SESSION cwd, so a `cd <other repo> && ...` prefix was gated against the
   // wrong branch and read the wrong verify flag.
-  if (!repoStopped && /\bgit\b[^\n]*\bcommit\b/.test(H.stripQuotedContent(cmd))) {
+  if (!repoStopped && H.GIT_COMMIT.test(H.stripQuotedContent(cmd))) {
     const gcwd = H.effectiveCwd(cmd, cwd);
     const branch = H.currentBranch(gcwd);
     // Cross-pass verify flag, written by `phalanx-verify` on a real exit 0 and DELETED on

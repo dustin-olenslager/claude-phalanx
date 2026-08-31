@@ -64,7 +64,7 @@ function labelFor(line) { for (const [l, re] of RULES) if (re.test(line)) return
 // `cd <dir>` before the commit and a `git -C <dir> … commit` form.
 function commitDir(cmd, cwd) {
   let dir = cwd;
-  const gi = cmd.search(/\bgit\b[^\n]*\bcommit\b/);
+  const gi = cmd.search(H.GIT_COMMIT);
   const cdRe = /(?:^|&&|;|\|\||\n)\s*cd\s+("([^"]*)"|'([^']*)'|[^\s;&|]+)/g;
   let m;
   while ((m = cdRe.exec(cmd)) && m.index < gi) dir = m[2] || m[3] || m[1];
@@ -108,7 +108,7 @@ function workTreeRoot(dir) {
 if (tool === 'Bash') {
   const cmd = (ti.command || '') + '';
   const live = stripHeredocs(cmd);
-  if (!/\bgit\b[^\n]*\bcommit\b/.test(live)) allow();
+  if (!H.GIT_COMMIT.test(live)) allow();
   if (isRemoteExec(live)) allow();
   const cwd = input.cwd || process.cwd();
   const repo = workTreeRoot(commitDir(live, cwd));
