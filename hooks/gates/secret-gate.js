@@ -110,6 +110,22 @@ if (tool === 'Bash') {
   if (!repo) return block('Secret-scan gate: commit blocked — could not resolve the git work tree for this commit (cwd=' + cwd + '), so the staged diff was NOT scanned. This is a repo-resolution failure, not a leak finding.' + (hasUnexpandablePath(live) ? ' The path is a shell variable or substitution, which this hook sees before the shell expands it - write the directory out in full.' : '') + ' Fix → run the commit as `cd <repo> && git commit …` with a literal path (or from inside the repo) so the gate can scan it. Override: touch ' + OFF + '.');
   const have = (bin) => { try { execSync('command -v ' + bin, { stdio: 'ignore' }); return true; } catch { return false; } };
 
+  // READ THE STAGED DIFF FIRST. Its readability is the precondition for trusting ANY
+  // scanner's clean verdict. `gitleaks protect --staged` exits 0 when it cannot read the
+  // index at all, so a corrupt .git/index used to short-circuit to allow() below with
+  // NOTHING scanned -- a fail-open that only reproduced on a box where gitleaks is
+  // installed, which is why the shipped self-test (secret:commit-diffread-fails-closed)
+  // was red at v1.7.21 here and green on machines without it.
+  // "Nothing staged" never throws (git exits 0 with empty stdout) and is handled by the
+  // `if (!diff) allow()`. A throw means the diff could not be read -> fail closed.
+  let diff;
+  try { diff = execSync('git diff --cached --unified=0', { cwd: repo, encoding: 'utf8' }); }
+  catch (e) {
+    const o = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '');
+    return block('Secret-scan gate: commit blocked — could not read the staged diff for this commit (repo=' + repo + '), so it was NOT scanned. This is a diff-read failure, not a leak finding.\n' + o.split('\n').slice(0, 12).join('\n') + '\nFix → resolve the git error above, then re-stage and commit. Override: touch ' + OFF + '.');
+  }
+  if (!diff) allow();
+
   // 1) gitleaks (preferred). Only a real leak verdict blocks here; a git/gitleaks
   //    error (no "leaks found"/"Finding:" in the output) falls through to the
   //    other scanners instead of masquerading as a finding.
@@ -129,17 +145,7 @@ if (tool === 'Bash') {
       // else: trufflehog errored for another reason -> fall through to regex.
     }
   }
-  // 3) regex fallback over the staged diff
-  // "Nothing staged" never throws here (git exits 0 with empty stdout) -- that
-  // case is handled by the `if (!diff) allow()` below. A throw means the diff
-  // itself could not be read, which must fail closed, not silently allow.
-  let diff;
-  try { diff = execSync('git diff --cached --unified=0', { cwd: repo, encoding: 'utf8' }); }
-  catch (e) {
-    const o = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '');
-    return block('Secret-scan gate: commit blocked — could not read the staged diff for this commit (repo=' + repo + '), so it was NOT scanned. This is a diff-read failure, not a leak finding.\n' + o.split('\n').slice(0, 12).join('\n') + '\nFix → resolve the git error above, then re-stage and commit. Override: touch ' + OFF + '.');
-  }
-  if (!diff) allow();
+  // 3) regex fallback over the staged diff (already read above)
   const hits = [];
   let file = '?', line = 0;
   for (const raw of diff.split('\n')) {

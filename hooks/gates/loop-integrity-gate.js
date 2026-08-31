@@ -66,7 +66,6 @@ try { repoStopped = fs.existsSync(path.join(cwd, ".work-off")); } catch {}
 const tool = input.tool_name || "";
 const ti = input.tool_input || {};
 
-const VERIFY_CMD = H.VERIFY_CMD;
 
 if (tool === "Bash") {
   const cmd = (ti.command || "") + "";
@@ -132,11 +131,14 @@ if (tool === "Bash") {
 
   if (!repoStopped && /\bgit\b[^\n]*\bcommit\b/.test(cmd)) {
     const branch = H.currentBranch(cwd);
-    // Cross-pass verify flag (written by pipeline-gate) OR a verify chained into this
-    // same command -- either satisfies the gate without depending on hook ordering.
-    const verified = H.verifyFlagFresh(cwd) || VERIFY_CMD.test(cmd);
+    // Cross-pass verify flag, written by `phalanx-verify` on a real exit 0 and DELETED on
+    // any non-zero exit. The old `|| VERIFY_CMD.test(cmd)` escape hatch is gone: it matched
+    // the COMMIT COMMAND ITSELF, so `git commit -m "fix: verify the tree"` (or any message
+    // containing verify/lint/e2e/test) satisfied its own gate. Nothing about a command's
+    // text is evidence that anything passed -- only an exit code is.
+    const verified = H.verifyFlagFresh(cwd);
     if (/^task\//.test(branch) && !verified) {
-      const msg = "Loop-integrity gate (item 5b): commit on " + branch + " blocked -- no verify/test ran green this pass. Fix → run the build/test/lint/typecheck green before committing on a task/<slug> branch (independent of .pipeline-off).";
+      const msg = "Loop-integrity gate (item 5b): commit on " + branch + " blocked -- no verify/test exited 0 for this branch. Fix → run it through the recorder so the exit code is what counts: `" + require('path').join(HERE,'bin','phalanx-verify') + " pnpm verify` (or the same wrapper around your build/test/lint/typecheck command), then retry. A bare run, or a verify word in the commit message, no longer counts (independent of .pipeline-off).";
       return WARN_ONLY ? out("allow", "WARN " + msg) : out("deny", msg);
     }
   }
