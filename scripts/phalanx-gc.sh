@@ -71,7 +71,11 @@ pushed() {
   git -C "$r" merge-base --is-ancestor "$b" "origin/$b" 2>/dev/null
 }
 unique_count() { git -C "$1" rev-list --count "$3..$2" 2>/dev/null || echo 999; }
-pr_merged() { [ -n "$MERGED_HEADS" ] && echo "$MERGED_HEADS" | grep -qx "$1"; }
+pr_merged() { # branch [repo] -> 0 only when the LOCAL head is exactly the sha the PR merged
+  [ -n "$MERGED_HEADS" ] && echo "$MERGED_HEADS" | grep -qx "$1" || return 1
+  local r="${2:-$CUR_TOP}" sha; sha="$(git -C "$r" rev-parse -q --verify "refs/heads/$1" 2>/dev/null)"; [ -n "$sha" ] || return 1
+  printf '%s\n' "$MERGED_TSV" | awk -F'\t' -v b="$1" -v s="$sha" '$1==b && $2==s {f=1} END{exit f?0:1}'
+}
 pr_open() { [ -n "$OPEN_HEADS" ] && echo "$OPEN_HEADS" | grep -qx "$1"; }
 
 wt_remove() { # $1=worktree path (as registered)  -> 0 on success
@@ -94,11 +98,14 @@ gc_repo() {
   local common; common="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
   local top; top="$(dirname "$common")"
   local M; M="$(main_of "$top")"
-  MERGED_HEADS=""; OPEN_HEADS=""
+  MERGED_HEADS=""; OPEN_HEADS=""; MERGED_TSV=""; CUR_TOP="$top"
   if [ $GH = 1 ]; then
     local slug; slug="$(git -C "$top" remote get-url origin 2>/dev/null | sed -E 's#.*github.com[:/]##; s#\.git$##')"
     if [ -n "$slug" ]; then
-      MERGED_HEADS="$(timeout 90 gh pr list -R "$slug" --state merged --limit 1000 --json headRefName -q '.[].headRefName' 2>/dev/null | sort -u)"
+      # head name + the exact sha that merged: a local branch that moved on AFTER its PR
+      # merged (new commits on the same name) must never be swept as "merged".
+      MERGED_TSV="$(timeout 90 gh pr list -R "$slug" --state merged --limit 1000 --json headRefName,headRefOid -q '.[] | "\(.headRefName)\t\(.headRefOid)"' 2>/dev/null)"
+      MERGED_HEADS="$(printf '%s\n' "$MERGED_TSV" | cut -f1 | sort -u)"
       OPEN_HEADS="$(timeout 60 gh pr list -R "$slug" --state open --limit 500 --json headRefName -q '.[].headRefName' 2>/dev/null | sort -u)"
     fi
   fi

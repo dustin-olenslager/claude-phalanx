@@ -52,7 +52,8 @@
         "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           { "type": "command", "command": "node \"__CLAUDE_DIR__/secret-gate.js\"", "timeout": 10 },
-          { "type": "command", "command": "node \"__CLAUDE_DIR__/loop-integrity-gate.js\"", "timeout": 10 }
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/loop-integrity-gate.js\"", "timeout": 10 },
+          { "type": "command", "command": "node \"__CLAUDE_DIR__/stale-main-gate.js\"", "timeout": 5 }
         ]
       }
     ],

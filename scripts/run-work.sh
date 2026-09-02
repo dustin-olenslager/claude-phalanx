@@ -354,7 +354,13 @@ while true; do
   git -C "$REPO" worktree prune >/dev/null 2>&1 || true
   if [ -z "${PHALANX_NO_WORKTREE:-}" ]; then
     WT_NAME="wt-$pass-$stamp"; wt_dir="$REPO/.claude/worktrees/$WT_NAME"; mkdir -p "$REPO/.claude/worktrees"
-    if git -C "$REPO" worktree add --detach "$wt_dir" "${MAIN:-HEAD}" >/dev/null 2>&1; then
+    # Base the pass on ORIGIN's main, not the local one: a local main that lags origin
+    # (the other machine pushed) would make the pass rebuild old code.
+    BASE="${MAIN:-HEAD}"
+    if [ -n "$MAIN" ] && (command -v timeout >/dev/null 2>&1 && timeout 20s git -C "$REPO" fetch -q origin "$MAIN" 2>/dev/null || git -C "$REPO" fetch -q origin "$MAIN" 2>/dev/null); then
+      git -C "$REPO" show-ref -q "refs/remotes/origin/$MAIN" && BASE="origin/$MAIN"
+    fi
+    if git -C "$REPO" worktree add --detach "$wt_dir" "$BASE" >/dev/null 2>&1; then
       CUR_WT="$wt_dir"; PASS_CWD="$wt_dir"
       wt_setup "$wt_dir" "$RUNDIR/setup-$pass-$stamp.log" || true
     else
