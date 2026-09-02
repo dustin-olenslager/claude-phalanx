@@ -235,13 +235,81 @@ Raw `KEY=value`, one per line, no quotes, `#` comments ok. `GH_TOKEN` and
 
 ## Worktree isolation
 
-Each autonomous pass runs in its own git worktree (`claude --worktree`, under
-`.claude/worktrees/`), so concurrent supervisors / sessions never collide on the primary
-checkout's branch or index. Loop **state stays shared**: `TASKS.md`, `PROGRESS.md`,
-`.claude-runs/`, and the `.phalanx-*` markers resolve to the shared repo root (via
-`git rev-parse --git-common-dir`), so a worktree pass drains the same backlog and its code
-is still gated. The primary stays on `main` and receives the merge (`git -C <main> merge`);
-worktrees are removed after each pass. Opt out with `PHALANX_NO_WORKTREE=1`.
+Each autonomous pass runs in its own git worktree (`.claude/worktrees/wt-<pass>-<stamp>/`),
+so concurrent supervisors / sessions never collide on the primary checkout's branch or
+index. `run-work.sh` owns the whole lifecycle — it does NOT use `claude --worktree`, which
+locks the tree (leaks on remove), parks it on a throwaway `worktree-*` branch, and ships
+it without `node_modules` (every JS verify was then refused):
+
+1. `git worktree add --detach` at `main`.
+2. Deps: `.phalanx-worktree-setup` (executable, run inside the worktree, `PHALANX_PRIMARY`
+   = the primary path) if present; otherwise the lockfile decides (`pnpm install
+   --frozen-lockfile --prefer-offline` / `yarn --frozen-lockfile` / `npm ci` / `bun install`).
+   Output lands in `.claude-runs/run-*/setup-*.log`.
+3. The pass runs with cwd inside the worktree; `PHALANX_REPO` is the primary.
+4. Teardown from the EXIT trap (kill/crash/timeout included): salvage uncommitted work
+   (`wip-preserve.sh`), unlock, remove, prune. Then a CLEAN primary tree is returned to
+   `main`; a dirty one is reported, never touched.
+5. End of run: `phalanx-gc.sh --apply <repo>` (safe tier, see below). `PHALANX_NO_GC=1` skips.
+
+Loop **state stays shared**: `TASKS.md`, `PROGRESS.md`, `.claude-runs/`, and the
+`.phalanx-*` markers resolve to the shared repo root (via `git rev-parse --git-common-dir`),
+so a worktree pass drains the same backlog and its code is still gated. The primary stays
+on `main` and receives the merge (`git -C <main> merge`). Opt out with `PHALANX_NO_WORKTREE=1`.
+
+### Pass permissions (non-interactive)
+`claude -p` never prompts: a tool call outside the allow-list is **refused** and the pass
+reports "requires approval" and makes no progress (the no-progress breaker then BLOCKs
+the loop). Passes therefore run with `--permission-mode acceptEdits` by default; Bash
+still needs the repo's committed `.claude/settings.json` allow-list to cover its own
+verify chain (`pnpm`, `gh pr create`, …). Per repo: `.phalanx-pass-args` (one CLI arg per
+line, replaces the default) or `.phalanx-yolo` (`--dangerously-skip-permissions`).
+
+## Two machines, one truth: `repo-fresh.sh`
+
+When the same repos are worked from more than one machine (Armstrong + HIVE), a local
+checkout is a cache and **origin is the only truth**. Three rules, one hook:
+
+1. **Never start from a checkout you have not fetched.** The `repo-fresh.sh` SessionStart
+   anchor fetches with prune on every session; a clean, un-diverged `main` is fast-forwarded
+   silently, anything else prints one `STALE:` line with the exact command. It also flags a
+   branch with commits origin has never seen — those are invisible from the other machine.
+2. **Finish a session by pushing.** Task branches are pushed and PR'd (the loop already does
+   this); local-only commits on `main` are a bug, not a workflow.
+3. **Never share a checkout across machines** (no synced working trees, no worktree copies
+   on a shared mount). The shared `~/.claude` layer syncs config and skills, never repos.
+
+Opt out per repo with `.phalanx-no-fresh`, globally with `PHALANX_NO_FRESH=1`.
+
+## Hygiene: `phalanx-gc.sh`
+
+Stale worktrees, merged branches, throwaway `worktree-*` branches, old run logs and a
+primary tree parked on a task branch all accumulate silently. `phalanx-gc.sh` sweeps them:
+
+```
+~/.claude/phalanx-gc.sh                 # dry run over ~/.claude/.phalanx-repos
+~/.claude/phalanx-gc.sh --apply --gh    # safe tier; --gh uses PR state (catches squash merges)
+~/.claude/phalanx-gc.sh --apply <repo>  # one repo
+```
+
+Safe tier (applied): `worktree prune` · remove worktrees that are CLEAN and merged /
+squash-merged / fully pushed / throwaway · delete local branches that are merged or
+whose PR is MERGED · delete `worktree-*` branches with 0 unique commits · delete
+`.claude-runs` entries older than 14 days · return a clean, merged primary tree to `main`.
+Reported only, never touched: dirty worktrees, unpushed branches, open-PR branches, remote
+branches (enable *delete branch on merge* on GitHub), stashes, `BLOCKED` sentinels, a
+dirty primary tree, a repo carrying both `TASKS.md` and `docs/claude/in-progress.d/`.
+**Queue truth — `phalanx-docs-reconcile.sh [--apply] [repo]`.** For a repo whose backlog is
+`docs/claude/in-progress.d/` fragments (Panoply / ADR-0004), each fragment is classified by
+its branch's pull request: MERGED → a dated row in `completed-features.md` and the fragment is
+deleted; CLOSED-unmerged, orphaned branch, or a pending operator step (migration not applied,
+image not rebuilt) → reported. Run it on a branch and ship the result as a PR; `phalanx-gc.sh`
+prints the drift count per repo so it cannot silently pile up again, and the orchestrator
+retires the fragment in the same change as the merge.
+
+The supervisor runs it at the end of every run; a weekly cron over the registry keeps
+interactive-session leftovers (`.claude/worktrees/agent-*` from subagent isolation) in check:
+`0 4 * * 0 $HOME/.claude/phalanx-gc.sh --apply --gh >> $HOME/.claude/.claude-runs/gc.log 2>&1`.
 
 ## Reporting & adapters
 
@@ -278,6 +346,10 @@ so no bot tokens/infra leak in. An adapter only implements the port:
 - `touch ~/.claude/.secret-scan-off`   → disable secret scan
 - `export PHALANX_WARN=1`              → gates warn instead of hard-block (NOT 5c/5d merge gate)
 - `export PHALANX_NO_WORKTREE=1`       → run passes in the primary tree, no per-pass worktree
+- `export PHALANX_NO_GC=1`             → skip the end-of-run `phalanx-gc.sh` sweep
+- `<repo>/.phalanx-worktree-setup`     → executable that installs deps in a fresh pass worktree (else lockfile-driven)
+- `<repo>/.phalanx-pass-args`          → CLI args for every `claude -p` pass, one per line (default `--permission-mode acceptEdits`)
+- `touch <repo>/.phalanx-yolo`         → passes run with `--dangerously-skip-permissions`
 - `export PHALANX_CTX_CEILING=0.6`     → raise/lower the checkpoint trigger (default `0.45`; `PHALANX_CTX_WARN` the early nudge, default `0.38`) — useful when native auto-compaction handles overflow
 - `touch <repo>/.phalanx-autorun`      → let the watcher drive this repo unattended
 - `touch <repo>/.phalanx-automerge`    → allow autonomous merge-on-green to `main`

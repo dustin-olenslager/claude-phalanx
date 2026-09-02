@@ -127,6 +127,63 @@ fi
 NOTIFY="$HERE/notify.sh"; [ -f "$NOTIFY" ] || NOTIFY="$CLAUDE_DIR/notify.sh"
 UNSEED="$HERE/unseed-task.sh"; [ -x "$UNSEED" ] || UNSEED="$CLAUDE_DIR/unseed-task.sh"
 WIP_PRESERVE="$HERE/wip-preserve.sh"; [ -f "$WIP_PRESERVE" ] || WIP_PRESERVE="$CLAUDE_DIR/wip-preserve.sh"
+GC="$HERE/phalanx-gc.sh"; [ -x "$GC" ] || GC="$CLAUDE_DIR/phalanx-gc.sh"
+
+# The repo's main branch (origin/HEAD > main > master). Passes branch from it and the
+# primary tree is returned to it after every pass; a primary tree left parked on a
+# stale task/<slug> was the #1 source of "why is my checkout on the wrong branch".
+MAIN="$(git -C "$REPO" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||')"
+[ -z "$MAIN" ] && { git -C "$REPO" show-ref -q refs/heads/main && MAIN=main || { git -C "$REPO" show-ref -q refs/heads/master && MAIN=master; }; }
+
+# Pass permissions: `claude -p` is non-interactive, so any tool call outside the
+# allow-list is REFUSED (not prompted) and the pass silently makes no progress. Default
+# to acceptEdits (file writes inside the tree auto-approved; Bash still needs the
+# repo's .claude/settings.json allow-list). Override per repo with .phalanx-pass-args
+# (one CLI arg per line) or .phalanx-yolo (--dangerously-skip-permissions).
+PASS_ARGS=()
+if [ -f "$REPO/.phalanx-pass-args" ]; then mapfile -t PASS_ARGS < <(grep -vE '^[[:space:]]*(#|$)' "$REPO/.phalanx-pass-args"); fi
+if [ -f "$REPO/.phalanx-yolo" ]; then PASS_ARGS=(--dangerously-skip-permissions)
+elif [ ${#PASS_ARGS[@]} -eq 0 ]; then PASS_ARGS=(--permission-mode acceptEdits); fi
+
+# Worktree lifecycle is OWNED HERE, not by `claude --worktree`: the CLI variant locks
+# the tree (a single `remove --force` then fails -> leaked .claude/worktrees/wt-*),
+# parks it on a throwaway `worktree-wt-*` branch, and gives it no node_modules, so
+# every verify in a JS repo was refused. We add a DETACHED worktree at $MAIN, install
+# deps from the lockfile (or run the repo's .phalanx-worktree-setup), run the pass
+# with cwd inside it, and tear it down from the EXIT trap so a kill/crash cannot leak.
+CUR_WT=""
+wt_setup() { # $1=worktree $2=log
+  local wt="$1" lg="$2" hook="$REPO/.phalanx-worktree-setup" cmd=""
+  if [ -x "$hook" ]; then
+    (cd "$wt" && PHALANX_PRIMARY="$REPO" timeout 900s "$hook") >>"$lg" 2>&1 && return 0
+    echo "WARN: .phalanx-worktree-setup failed (see $lg); pass runs without deps"; return 1
+  fi
+  [ -f "$wt/package.json" ] || return 0
+  if [ -f "$wt/pnpm-lock.yaml" ]; then cmd="pnpm install --frozen-lockfile --prefer-offline"
+  elif [ -f "$wt/yarn.lock" ]; then cmd="yarn install --frozen-lockfile"
+  elif [ -f "$wt/package-lock.json" ]; then cmd="npm ci --prefer-offline --no-audit --no-fund"
+  elif [ -f "$wt/bun.lock" ] || [ -f "$wt/bun.lockb" ]; then cmd="bun install --frozen-lockfile"; fi
+  [ -n "$cmd" ] || return 0
+  command -v "${cmd%% *}" >/dev/null 2>&1 || { echo "WARN: ${cmd%% *} not on PATH; worktree has no deps (add .phalanx-worktree-setup)"; return 1; }
+  (cd "$wt" && timeout 900s $cmd) >>"$lg" 2>&1 || { echo "WARN: '$cmd' failed in worktree (see $lg); pass runs without deps"; return 1; }
+}
+wt_teardown() { # salvage uncommitted work, then remove + prune; never leaks on any exit path
+  [ -n "$CUR_WT" ] || return 0
+  local wt="$CUR_WT"; CUR_WT=""
+  [ -f "$WIP_PRESERVE" ] && bash "$WIP_PRESERVE" "$REPO" "$wt" "${1:-teardown}" >/dev/null 2>&1 || true
+  git -C "$REPO" worktree unlock "$wt" >/dev/null 2>&1 || true
+  git -C "$REPO" worktree remove --force "$wt" >/dev/null 2>&1 \
+    || git -C "$REPO" worktree remove --force --force "$wt" >/dev/null 2>&1 \
+    || rm -rf "$wt" 2>/dev/null || true
+  git -C "$REPO" worktree prune >/dev/null 2>&1 || true
+}
+primary_home() { # return a CLEAN primary tree to $MAIN; a dirty tree is never touched
+  [ -n "$MAIN" ] || return 0
+  local cur; cur="$(git -C "$REPO" symbolic-ref --short HEAD 2>/dev/null || echo "")"
+  [ "$cur" = "$MAIN" ] && return 0
+  [ -z "$(git -C "$REPO" status --porcelain 2>/dev/null)" ] || { echo "NOTE: primary tree left on '$cur' (dirty) -- loop expects $MAIN"; return 0; }
+  git -C "$REPO" checkout -q "$MAIN" >/dev/null 2>&1 && echo "primary tree returned to $MAIN (was $cur)"
+}
 # Single source of truth for TASKS/PROGRESS parsing (mirrors the JS lib tasksState).
 TS_LIB="$HERE/tasks-state.sh"; [ -f "$TS_LIB" ] || TS_LIB="$CLAUDE_DIR/tasks-state.sh"
 # shellcheck source=/dev/null
@@ -194,6 +251,7 @@ fi
 # the pidfile (item 3): if anything below fails, the trap still releases the lock.
 STOP_REASON="ended"
 cleanup() {
+  wt_teardown "exit"; primary_home
   rm -f "$PIDF" 2>/dev/null; rm -rf "$LOCK" 2>/dev/null
   # request-scoped one-shot cleanup: if this run seeded a single tagged request,
   # remove its line so a left-open TASKS.md can't re-arm the loop later (item 6).
@@ -290,10 +348,19 @@ while true; do
   # instances never collide on the primary tree's branch or index. Loop STATE
   # (TASKS.md/PROGRESS.md/.claude-runs) stays at the primary (shared) root -- the gates
   # and orchestrator resolve it via --git-common-dir, so the worktree pass drains the
-  # SAME backlog. Non-interactive `--worktree` is NOT auto-removed, so we remove it after
-  # the pass. Opt out (or an older `claude` without --worktree) with PHALANX_NO_WORKTREE=1.
-  WT_NAME=""; WT_FLAGS=""
-  if [ -z "${PHALANX_NO_WORKTREE:-}" ]; then WT_NAME="wt-$pass-$stamp"; WT_FLAGS="--worktree $WT_NAME"; fi
+  # SAME backlog. The worktree is created HERE (detached at $MAIN, deps installed) and
+  # torn down by wt_teardown on every exit path. Opt out with PHALANX_NO_WORKTREE=1.
+  WT_NAME=""; PASS_CWD="$REPO"
+  git -C "$REPO" worktree prune >/dev/null 2>&1 || true
+  if [ -z "${PHALANX_NO_WORKTREE:-}" ]; then
+    WT_NAME="wt-$pass-$stamp"; wt_dir="$REPO/.claude/worktrees/$WT_NAME"; mkdir -p "$REPO/.claude/worktrees"
+    if git -C "$REPO" worktree add --detach "$wt_dir" "${MAIN:-HEAD}" >/dev/null 2>&1; then
+      CUR_WT="$wt_dir"; PASS_CWD="$wt_dir"
+      wt_setup "$wt_dir" "$RUNDIR/setup-$pass-$stamp.log" || true
+    else
+      echo "WARN: git worktree add failed; pass $pass runs in the primary tree"; WT_NAME=""
+    fi
+  fi
   # Wall-clock cap per pass (item 4): a hung `claude -p` must not block the
   # detached loop forever. `timeout` returns 124 on expiry -- treated as a
   # RECOVERABLE failure below (count it, notify, relaunch fresh), not a hard stop.
@@ -325,17 +392,14 @@ while true; do
   [ -n "$PHALANX_MODEL_ID" ] && MODEL_FLAG="--model $PHALANX_MODEL_ID"
 
   set +e
-  if command -v timeout >/dev/null 2>&1; then
+  PASS_TO=""; command -v timeout >/dev/null 2>&1 && PASS_TO="timeout ${PHALANX_PASS_TIMEOUT:-1800}s"
+  (
+    cd "$PASS_CWD" || exit 97
     PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
       CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" GH_TOKEN="$GH_TOKEN_VAL" \
       env ${ACCESS_KV[@]+"${ACCESS_KV[@]}"} \
-      timeout "${PHALANX_PASS_TIMEOUT:-1800}s" claude $MODEL_FLAG -p "/work" $WT_FLAGS 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
-  else
-    PHALANX_ONESHOT=1 PHALANX_SUPERVISOR=1 PHALANX_REPO="$REPO" \
-      CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" GH_TOKEN="$GH_TOKEN_VAL" \
-      env ${ACCESS_KV[@]+"${ACCESS_KV[@]}"} \
-      claude $MODEL_FLAG -p "/work" $WT_FLAGS 2>&1 | tee "$log"; code="${PIPESTATUS[0]}"
-  fi
+      $PASS_TO claude $MODEL_FLAG "${PASS_ARGS[@]}" -p "/work" 2>&1 | tee "$log"; exit "${PIPESTATUS[0]}"
+  ); code=$?
   set -e
 
   # Remove the pass's worktree (non-interactive --worktree is not auto-cleaned). A HAPPY
@@ -344,11 +408,8 @@ while true; do
   # task/<slug>, and --force would destroy them (2026-07-03 fonto/JEX-P2 loss). Salvage
   # first: wip-preserve stashes dirty state into the shared repo and records a WIP-STASH
   # line in PROGRESS.md so the next pass restores it before resuming.
-  if [ -n "$WT_NAME" ]; then
-    [ -f "$WIP_PRESERVE" ] && bash "$WIP_PRESERVE" "$REPO" "$REPO/.claude/worktrees/$WT_NAME" "pass $pass $stamp" >/dev/null 2>&1 || true
-    git -C "$REPO" worktree remove --force "$REPO/.claude/worktrees/$WT_NAME" >/dev/null 2>&1 || true
-    git -C "$REPO" worktree prune >/dev/null 2>&1 || true
-  fi
+  wt_teardown "pass $pass $stamp"
+  primary_home
 
   # Belt-and-suspenders: if this pass ran as root on a shared mount, hand any
   # freshly-created git objects back to the repo owner so the non-root owner can
@@ -386,5 +447,10 @@ while true; do
   sleep "$SLEEP_SECONDS"
 done
 
+# Hygiene on the way out (safe tier only: prune, clean+merged worktrees, merged
+# branches, throwaway worktree-* branches, run logs > 14d). PHALANX_NO_GC=1 skips.
+if [ -z "${PHALANX_NO_GC:-}" ] && [ -x "$GC" ]; then
+  PHALANX_GC_QUIET=1 "$GC" --apply "$REPO" 2>&1 | tail -25 | tee -a "$LOGDIR/gc.log"
+fi
 echo "Loop ended ($STOP_REASON). Passes run: $pass. Logs in $LOGDIR."
 note "done" "supervisor stopped ($STOP_REASON) after $pass pass(es): $REPO"

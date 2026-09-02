@@ -22,6 +22,8 @@
           { "type": "command", "command": "\"__CLAUDE_DIR__/ts-arch-anchor.sh\"", "timeout": 5 },
           { "type": "command", "command": "\"__CLAUDE_DIR__/phase-anchor.sh\"", "timeout": 5 },
           { "type": "command", "command": "node \"__CLAUDE_DIR__/work-autostart.js\"", "timeout": 5 },
+          { "type": "command", "command": "\"__CLAUDE_DIR__/repo-fresh.sh\"", "timeout": 15 },
+          { "type": "command", "command": "\"__CLAUDE_DIR__/gc-anchor.sh\"", "timeout": 25 },
           { "type": "command", "command": "\"__CLAUDE_DIR__/phalanx-selfupdate.sh\"", "timeout": 30 }
         ]
       }

@@ -40,6 +40,16 @@ latest=$(git tag -l "v*" --sort=-v:refname 2>/dev/null | head -1)
 [ -n "$latest" ] || exit 0
 latest_sha=$(git rev-parse -q --verify "refs/tags/$latest^{commit}" 2>/dev/null)
 head_sha=$(git rev-parse -q --verify HEAD 2>/dev/null)
+# Local work in progress wins: when the checkout sits on a BRANCH whose HEAD is not an
+# ancestor of the latest tag (unreleased commits, e.g. a fix being tested before it is
+# pushed + tagged), do NOT force-checkout the tag over it -- that silently reverted a
+# hardening branch on 2026-09-02 within the hour. Detached-at-tag (the normal state)
+# and a branch that is behind the tag still update as before.
+if git symbolic-ref -q HEAD >/dev/null 2>&1 && [ -n "$latest_sha" ] \
+   && ! git merge-base --is-ancestor "$head_sha" "$latest_sha" 2>/dev/null; then
+  echo "[phalanx-selfupdate] skipped: $(git branch --show-current) has unreleased commits (latest tag $latest); push + tag to resume auto-update"
+  exit 0
+fi
 if [ -n "$latest_sha" ] && [ "$latest_sha" != "$head_sha" ]; then
   # SECURITY NOTE (audit 2026-08-17): the tag about to be checked out + executed (install.sh)
   # is REMOTE CODE. Anyone able to push a v* tag to origin would get code run under the
