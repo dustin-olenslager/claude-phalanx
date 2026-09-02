@@ -265,6 +265,22 @@ still needs the repo's committed `.claude/settings.json` allow-list to cover its
 verify chain (`pnpm`, `gh pr create`, …). Per repo: `.phalanx-pass-args` (one CLI arg per
 line, replaces the default) or `.phalanx-yolo` (`--dangerously-skip-permissions`).
 
+## Two machines, one truth: `repo-fresh.sh`
+
+When the same repos are worked from more than one machine (Armstrong + HIVE), a local
+checkout is a cache and **origin is the only truth**. Three rules, one hook:
+
+1. **Never start from a checkout you have not fetched.** The `repo-fresh.sh` SessionStart
+   anchor fetches with prune on every session; a clean, un-diverged `main` is fast-forwarded
+   silently, anything else prints one `STALE:` line with the exact command. It also flags a
+   branch with commits origin has never seen — those are invisible from the other machine.
+2. **Finish a session by pushing.** Task branches are pushed and PR'd (the loop already does
+   this); local-only commits on `main` are a bug, not a workflow.
+3. **Never share a checkout across machines** (no synced working trees, no worktree copies
+   on a shared mount). The shared `~/.claude` layer syncs config and skills, never repos.
+
+Opt out per repo with `.phalanx-no-fresh`, globally with `PHALANX_NO_FRESH=1`.
+
 ## Hygiene: `phalanx-gc.sh`
 
 Stale worktrees, merged branches, throwaway `worktree-*` branches, old run logs and a
