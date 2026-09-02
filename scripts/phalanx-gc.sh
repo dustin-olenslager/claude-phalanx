@@ -179,9 +179,14 @@ gc_repo() {
   # G. stashes
   local sc; sc="$(git -C "$top" stash list | wc -l)"
   [ "$sc" -gt 0 ] && info "$sc stashes (oldest: $(git -C "$top" stash list --format='%cr %gs' | tail -1 | head -c 100))"
-  # H. two backlogs
-  if [ -f "$top/TASKS.md" ] && [ -d "$top/docs/claude/in-progress.d" ]; then
-    warn "TWO backlogs: TASKS.md ($(grep -c '^- \[ \]' "$top/TASKS.md") open) AND docs/claude/in-progress.d ($(ls "$top/docs/claude/in-progress.d" | wc -l) files) -- loop reads TASKS.md only"
+  # H. queue drift: fragments whose PR already merged, orphans, operator steps
+  if [ -d "$top/docs/claude/in-progress.d" ]; then
+    local DR; DR="$(dirname "$0")/phalanx-docs-reconcile.sh"; [ -x "$DR" ] || DR="$CLAUDE_DIR/phalanx-docs-reconcile.sh"
+    if [ -x "$DR" ]; then
+      local q; q="$(GH_TOKEN="${GH_TOKEN:-}" timeout 150 "$DR" "$top" 2>/dev/null | tail -1)"
+      case "$q" in *"ship=0 "*) ;; *) warn "queue drift: ${q#queue: } -- run phalanx-docs-reconcile.sh --apply $top (on a branch)";; esac
+    fi
+    [ -f "$top/TASKS.md" ] && info "TASKS.md ($(grep -c '^- \[ \]' "$top/TASKS.md") open) + in-progress.d ($(ls "$top/docs/claude/in-progress.d" | wc -l) fragments) -- loop reads TASKS.md only until the ADR-0004 sweep lands"
   fi
   } > "$out" 2>&1
   if [ -s "$out" ] || [ -z "${PHALANX_GC_QUIET:-}" ]; then echo "## $top ($M)"; cat "$out"; fi
