@@ -86,8 +86,9 @@ for f in "$Q"/*.md; do
 done
 if [ $APPLY = 1 ] && [ -n "$ENTRIES" ]; then
   if [ -f "$DONE" ]; then
-    # newest first: insert before the first existing "### <feature> — date" entry, else append
-    tmp="$(mktemp)"; awk -v e="$ENTRIES" 'BEGIN{done=0} /^### / && !done {print e; done=1} {print} END{if(!done) print e}' "$DONE" > "$tmp" && mv "$tmp" "$DONE"
+    # newest first: insert before the first REAL entry -- a "### " line outside a fenced block
+    # that is not the template placeholder or the EXAMPLE row -- else append at the end.
+    tmp="$(mktemp)"; awk -v e="$ENTRIES" 'BEGIN{done=0;fence=0} /^```/{fence=!fence} /^### / && !fence && !done && $0 !~ /<Feature name>|EXAMPLE/ {print e; done=1} {print} END{if(!done) print e}' "$DONE" > "$tmp" && mv "$tmp" "$DONE"
   else
     printf '# Completed Features\n%s\n' "$ENTRIES" > "$DONE"
   fi
