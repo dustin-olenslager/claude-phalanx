@@ -267,7 +267,7 @@ line, replaces the default) or `.phalanx-yolo` (`--dangerously-skip-permissions`
 
 ## Two machines, one truth: `repo-fresh.sh`
 
-When the same repos are worked from more than one machine (Armstrong + HIVE), a local
+When the same repos are worked from more than one machine (a workstation + a server), a local
 checkout is a cache and **origin is the only truth**. Three rules, one hook:
 
 1. **Never start from a checkout you have not fetched.** The `repo-fresh.sh` SessionStart

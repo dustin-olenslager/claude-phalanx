@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SessionStart: never start work from stale code. Two machines (Armstrong + HIVE) share
+# SessionStart: never start work from stale code. Two machines (workstation + server) share
 # every repo through origin only, so the local checkout is a cache, not the truth.
 #   * fetch --prune (8s cap; offline -> silent)
 #   * main clean + behind + not ahead  -> fast-forward it, say so

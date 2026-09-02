@@ -12,7 +12,7 @@
 #     MERGED pull request. Locked worktrees are unlocked first (`claude --worktree`
 #     locks them; a single --force cannot remove them). Removal runs against the
 #     primary path recorded in the worktree's own .git file, so bind-mount aliases
-#     (/workspace vs /mnt/user/...) do not break it; a worktree whose registration
+#     (the same tree reachable under two mount paths) do not break it; a worktree whose registration
 #     is already gone is rm -rf'd (it was verified clean first).
 #   * delete local branches merged into main/origin-main (not checked out anywhere)
 #   * (--gh) delete local branches whose PR is MERGED -- catches squash/rebase merges
