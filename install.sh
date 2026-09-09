@@ -89,6 +89,10 @@ chmod +x "$CLAUDE_DIR/bin/phalanx-core" 2>/dev/null || true
 # script (not a launcher) so it works from any cwd, worktree, or supervisor pass.
 cp "$HERE/scripts/phalanx-verify" "$CLAUDE_DIR/bin/phalanx-verify"
 chmod +x "$CLAUDE_DIR/bin/phalanx-verify" 2>/dev/null || true
+# phalanx-record-preview — soft gate, opt-in via .phalanx-preview (ADR-0005). Installed
+# unconditionally like every other script here; it no-ops without the marker.
+cp "$HERE/scripts/phalanx-record-preview" "$CLAUDE_DIR/bin/phalanx-record-preview"
+chmod +x "$CLAUDE_DIR/bin/phalanx-record-preview" 2>/dev/null || true
 
 echo "==> agents + commands + work-loop wrappers"
 mkdir -p "$CLAUDE_DIR/agents" "$CLAUDE_DIR/commands"
@@ -114,6 +118,10 @@ echo "==> templates (state + dependency-cruiser + policy)"
 cp "$HERE"/state/*.json "$CLAUDE_DIR/phalanx-templates/state/"
 cp "$HERE"/configs/.dependency-cruiser.js "$CLAUDE_DIR/phalanx-templates/"
 cp "$HERE"/policy/risk-policy.json "$CLAUDE_DIR/phalanx-templates/" 2>/dev/null || true
+
+echo "==> templates (PR preview journeys, ADR-0005)"
+mkdir -p "$CLAUDE_DIR/phalanx-templates/previews"
+cp "$HERE/scripts/templates/preview-example.mjs" "$CLAUDE_DIR/phalanx-templates/previews/" 2>/dev/null || true
 
 # Policy contract (Items 2-5 unifying primitive). Create-if-absent so a release
 # pull never clobbers operator opt-ins; the refreshed template lives alongside.

@@ -186,13 +186,14 @@ scripts/supervisord.sh stop   -r <repo>    # or: touch <repo>/.work-off
 
 The point of the loop is *finishing*: after a task commits green on `task/<slug>`, the
 loop can merge to `main` and deploy — but only where you opt in, gated mechanically.
-Three **independent, default-OFF** per-repo markers:
+These **independent, default-OFF** per-repo markers:
 
 | Marker (repo root) | Grants |
 |---|---|
 | `.phalanx-autorun` | the watch cron may drive this repo unattended (registry membership alone does **not**) |
 | `.phalanx-automerge` | a green-verified `task/<slug>` may merge to `main` |
 | `.phalanx-deploy` (executable) | run after a green merge to deploy; absent → merge only, report |
+| `.phalanx-preview` | before opening the PR, record before/after clips — see [PR preview recordings](#pr-preview-recordings-adr-0005) |
 
 The **merge-into-main gate is non-bypassable** (ignores `PHALANX_WARN`):
 
@@ -211,6 +212,33 @@ tag-push creds. Keep the tag pattern in the per-repo deploy script.
 
 **Push creds:** a scoped `GH_TOKEN` in `~/.claude/.loop-git-env` (mode 0600, injected
 only on the `claude` exec env), or a credential helper the loop user can read.
+
+## PR preview recordings (ADR-0005)
+
+Opt-in per repo (`.phalanx-preview` at the repo root, default OFF): `phalanx-record-preview`
+replays a committed Playwright journey against `main` and the task branch, records each at
+both viewports, and attaches the before/after clips to the pull request — so an unattended
+pass shows its work, not just a green check.
+
+- **Config** — `.phalanx-preview` is JSON, all keys optional:
+  `baseUrl` (`http://127.0.0.1:3000`), `startCmd` (`null`), `readyTimeoutMs` (`120000`),
+  `viewports` (`[390, 1440]`), `budgetBytes` (`10485760`), and `userFacingPaths`
+  (`["src/**","app/**","components/**","pages/**","public/**","styles/**"]`). Recording only
+  runs when the branch diff (`git diff <merge-base>...HEAD`) touches a `userFacingPaths` glob;
+  `--force` bypasses that gate for an on-demand run.
+- **Journeys** live at `.phalanx/previews/<slug>.mjs`, one committed ES module per preview:
+  `export async function run(page, ctx)` plus optional `title`, `sinceMain` (skip the
+  before-run for a screen that doesn't exist on `main`), `viewports`, `budgetMs`. The recorder
+  supplies the browser, video context, viewport, and base URL; the journey only drives the page.
+- **ffmpeg is two-tier.** A full ffmpeg on `PATH` (has `hstack`) yields one labelled
+  before/after split-screen clip per viewport; without it the raw WebM pair is attached
+  instead. Playwright's bundled ffmpeg is built `--disable-everything` — no `hstack`, no
+  `drawtext` — so it can downscale for the byte budget but never composite.
+- **Auto-posting needs `gh >= 2.99.0`** (`gh pr comment --attach`). Below that version the
+  recorder writes clips under `.claude-runs/previews/` and prints the paths for a manual
+  drag-in.
+- **Soft gate, always.** No marker → nothing runs, nothing is printed. A recorder failure
+  never blocks or retries `verify`, a commit, or a PR.
 
 ## Wiring access into your loop
 
@@ -353,6 +381,7 @@ so no bot tokens/infra leak in. An adapter only implements the port:
 - `export PHALANX_CTX_CEILING=0.6`     → raise/lower the checkpoint trigger (default `0.45`; `PHALANX_CTX_WARN` the early nudge, default `0.38`) — useful when native auto-compaction handles overflow
 - `touch <repo>/.phalanx-autorun`      → let the watcher drive this repo unattended
 - `touch <repo>/.phalanx-automerge`    → allow autonomous merge-on-green to `main`
+- `touch <repo>/.phalanx-preview`      → record before/after PR preview clips (ADR-0005)
 - caveman comms: say "stop caveman" / "normal mode"
 
 ## Plugins

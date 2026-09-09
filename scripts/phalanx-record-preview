@@ -27,7 +27,7 @@ function loadHookLib() {
 }
 
 function parseArgs(argv) {
-  const opts = { slug: null, journey: null, json: false, dryRun: false, attach: null, pr: null };
+  const opts = { slug: null, journey: null, json: false, dryRun: false, attach: null, pr: null, force: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--slug") opts.slug = argv[++i];
@@ -37,6 +37,7 @@ function parseArgs(argv) {
     else if (a === "--attach") opts.attach = true;
     else if (a === "--no-attach") opts.attach = false;
     else if (a === "--pr") opts.pr = argv[++i];
+    else if (a === "--force") opts.force = true;
   }
   return opts;
 }
@@ -57,6 +58,44 @@ function parseConfig(markerPath) {
   if (!raw) return { ...DEFAULT_CONFIG };
   const parsed = JSON.parse(raw);
   return { ...DEFAULT_CONFIG, ...parsed };
+}
+
+// --- diff gate: skip recording unless the branch touches a user-facing path ---------
+// Translates a `**`/`*`/`?` glob to a RegExp — no dependency, no minimatch.
+function globToRegExp(pattern) {
+  let re = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === "*" && pattern[i + 1] === "*") {
+      re += ".*";
+      i++;
+      if (pattern[i + 1] === "/") i++;
+    } else if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else if ("\\^$.|+()[]{}".includes(c)) re += "\\" + c;
+    else re += c;
+  }
+  return new RegExp("^" + re + "$");
+}
+
+function globMatch(pattern, filePath) {
+  return globToRegExp(pattern).test(filePath);
+}
+
+function getDiffPaths(root, mergeBase) {
+  const args = mergeBase ? ["diff", "--name-only", `${mergeBase}...HEAD`] : ["diff", "--name-only", "HEAD"];
+  try {
+    return cp.execFileSync("git", args, { cwd: root, stdio: ["ignore", "pipe", "ignore"] })
+      .toString().split("\n").map((s) => s.trim()).filter(Boolean);
+  } catch { return []; }
+}
+
+// gated = true means no diffed path matched a userFacingPaths glob, so recording
+// would be wasted work — the caller decides whether --force overrides that.
+function computeUserFacing(root, mergeBase, patterns) {
+  const diffed = getDiffPaths(root, mergeBase);
+  const changed = diffed.filter((f) => patterns.some((pat) => globMatch(pat, f)));
+  return { changed, gated: changed.length === 0 };
 }
 
 function resolveJourneyFiles(root, previewsDir, opts) {
@@ -549,14 +588,21 @@ async function main() {
   try { config = parseConfig(markerPath); }
   catch (e) { console.log(`preview: skipped (invalid .phalanx-preview: ${e.message})`); return; }
 
+  const mergeBase = getMergeBase(root);
+  const userFacing = computeUserFacing(root, mergeBase, config.userFacingPaths);
+  if (userFacing.gated && !opts.force) {
+    if (opts.dryRun) console.log(JSON.stringify({ dryRun: true, mergeBase, userFacing }, null, 2));
+    else console.log("preview: skipped (no user-facing paths changed)");
+    return;
+  }
+
   const previewsDir = path.join(root, ".phalanx", "previews");
   const journeyFiles = resolveJourneyFiles(root, previewsDir, opts);
   if (journeyFiles.length === 0) { console.log("preview: skipped (no journeys)"); return; }
 
-  const mergeBase = getMergeBase(root);
-
   if (opts.dryRun) {
-    console.log(JSON.stringify(await buildDryRunPlan(root, journeyFiles, config, mergeBase), null, 2));
+    const plan = await buildDryRunPlan(root, journeyFiles, config, mergeBase);
+    console.log(JSON.stringify({ ...plan, userFacing }, null, 2));
     return;
   }
 
@@ -565,12 +611,14 @@ async function main() {
   catch { console.log("preview: skipped (playwright not installed)"); return; }
 
   const result = await runAll(root, journeyFiles, config, mergeBase, pw, opts);
+  result.userFacing = userFacing;
   writeResult(root, result);
   pruneOldBaselines(root);
 
   if (opts.json) {
     console.log(JSON.stringify({
-      generatedAt: result.generatedAt, ffmpeg: result.ffmpeg, attach: result.attach, journeys: result.journeys,
+      generatedAt: result.generatedAt, ffmpeg: result.ffmpeg, attach: result.attach,
+      journeys: result.journeys, userFacing: result.userFacing,
     }));
   } else { for (const line of result.lines) console.log(line); console.log(finalTally(result)); }
 }

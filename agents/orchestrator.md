@@ -48,6 +48,8 @@ Full autonomy granted: commit (caveman-commit), push branches, open PRs. Still b
 ## Merge + deploy on green (autonomous completion)
 The point of the loop is finishing — tested work lands and ships. After a task is committed on `task/<slug>` AND a verify ran GREEN this pass:
 
+**Preview clips, before opening the PR.** If the repo carries `.phalanx-preview`, run `phalanx-record-preview` from the worktree right after the green verify and before `gh pr create`. It is a soft gate: it always exits 0, never touches the verify flag, and a recorder failure is reported and ignored — never block or retry the PR on it. On `gh >= 2.99.0` the recorder posts the clips itself as a PR comment; below that it prints local paths under `.claude-runs/previews/` — put those paths in the PR body under a `## Preview` heading and note they need a manual drag-in. No marker → do nothing, say nothing.
+
 1. **Merge — only if the repo opted in.** Look for `.phalanx-automerge` at the repo root.
    - **Absent (default):** push the branch and `gh pr create` (PR body = units + the green check), THEN **check the task off in TASKS.md** with the PR link — e.g. `- [x] <task> — shipped PR #N, awaiting human merge`. The autonomous work is DONE; merging is the human's action. Do NOT leave the task `- [ ]`: a still-open already-shipped task makes the next pass re-pick it, make no progress, and trip the no-progress breaker with a misleading `BLOCKED: no progress`. After checking off, continue to the next task (none left → backlog empty → stop cleanly).
    - **Present:** merge on green. Canonical command (the loop-integrity gate parses this exact shape):
