@@ -4,6 +4,7 @@
 // committed .phalanx/previews/<slug>.mjs journey. Soft gate: never blocks, never
 // touches the verify flag, always exits 0. See docs/adr/ADR-0005.
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const cp = require("child_process");
 const crypto = require("crypto");
@@ -26,13 +27,16 @@ function loadHookLib() {
 }
 
 function parseArgs(argv) {
-  const opts = { slug: null, journey: null, json: false, dryRun: false };
+  const opts = { slug: null, journey: null, json: false, dryRun: false, attach: null, pr: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--slug") opts.slug = argv[++i];
     else if (a === "--journey") opts.journey = argv[++i];
     else if (a === "--json") opts.json = true;
     else if (a === "--dry-run") opts.dryRun = true;
+    else if (a === "--attach") opts.attach = true;
+    else if (a === "--no-attach") opts.attach = false;
+    else if (a === "--pr") opts.pr = argv[++i];
   }
   return opts;
 }
@@ -114,7 +118,89 @@ async function buildDryRunPlan(root, journeyFiles, config, mergeBase) {
       journeyHash, mergeBase, loadError: error, perViewport,
     });
   }
-  return { dryRun: true, mergeBase, journeys };
+  return { dryRun: true, mergeBase, ffmpeg: findFfmpeg(), ghVersion: ghVersion(), journeys };
+}
+
+// --- ffmpeg tier detection ---------------------------------------------------
+// Playwright's bundled ffmpeg is built --disable-everything: only pad/crop/scale,
+// libvpx_vp8, and the WebM muxer. No hstack, no drawtext. Presence on disk does
+// NOT imply capability — the -filters listing is probed, never assumed.
+let ffmpegCache;
+
+function playwrightFfmpegCandidates() {
+  const base = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.homedir(), ".cache", "ms-playwright");
+  let entries;
+  try { entries = fs.readdirSync(base); } catch { return []; }
+  const versioned = entries
+    .map((e) => ({ e, m: e.match(/^ffmpeg-(\d+)$/) }))
+    .filter((x) => x.m)
+    .sort((a, b) => Number(b.m[1]) - Number(a.m[1]));
+  const bins = ["ffmpeg-linux", "ffmpeg-mac", "ffmpeg-win.exe"];
+  const found = [];
+  for (const { e } of versioned) {
+    for (const bin of bins) {
+      const p = path.join(base, e, bin);
+      if (fs.existsSync(p)) found.push(p);
+    }
+  }
+  return found;
+}
+
+function probeFfmpegTier(candidate) {
+  try {
+    const res = cp.spawnSync(candidate, ["-hide_banner", "-filters"], { encoding: "utf8", timeout: 5000 });
+    if (res.error) return null;
+    const out = `${res.stdout || ""}${res.stderr || ""}`;
+    if (!out) return null;
+    return /^\s*\S*\s+hstack\b/m.test(out) ? "full" : "minimal";
+  } catch { return null; }
+}
+
+function findFfmpeg() {
+  if (ffmpegCache !== undefined) return ffmpegCache;
+  if (process.env.PHALANX_FFMPEG) {
+    const tier = probeFfmpegTier(process.env.PHALANX_FFMPEG);
+    ffmpegCache = tier ? { path: process.env.PHALANX_FFMPEG, tier } : null;
+    return ffmpegCache;
+  }
+  for (const candidate of ["ffmpeg", ...playwrightFfmpegCandidates()]) {
+    const tier = probeFfmpegTier(candidate);
+    if (tier) { ffmpegCache = { path: candidate, tier }; return ffmpegCache; }
+  }
+  ffmpegCache = null;
+  return null;
+}
+
+// --- gh preflight + semver -----------------------------------------------
+function ghVersion() {
+  try {
+    const out = cp.execFileSync("gh", ["--version"], { stdio: ["ignore", "pipe", "ignore"] }).toString();
+    const m = out.match(/gh version (\d+\.\d+\.\d+)/);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+
+function semverGte(version, min) {
+  const a = version.split(".").map(Number);
+  const b = min.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  }
+  return true;
+}
+
+function ghAuthed() {
+  try { cp.execFileSync("gh", ["auth", "status"], { stdio: "ignore" }); return true; }
+  catch { return false; }
+}
+
+function resolvePr(root, forcedPr) {
+  if (forcedPr) return String(forcedPr);
+  try {
+    return cp.execFileSync("gh", ["pr", "view", "--json", "number", "-q", ".number"], {
+      cwd: root, stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim() || null;
+  } catch { return null; }
 }
 
 function resolvePlaywright(root) {
@@ -239,13 +325,124 @@ async function recordBefore(browser, root, previewsRoot, mod, slug, journeyHash,
   }
 }
 
-async function runAll(root, journeyFiles, config, mergeBase, pw) {
+function buildComposite(ffmpegPath, beforePath, afterPath, outPath, vw, vh) {
+  const label = (text) => `drawtext=text='${text}':x=10:y=10:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.5`;
+  const filter =
+    `[0:v]scale=${vw}:${vh},${label("before")}[b];` +
+    `[1:v]scale=${vw}:${vh},${label("after")}[a];` +
+    `[b][a]hstack=inputs=2[out]`;
+  cp.execFileSync(ffmpegPath, [
+    "-y", "-i", beforePath, "-i", afterPath,
+    "-filter_complex", filter, "-map", "[out]",
+    "-c:v", "libvpx", "-b:v", "1M", outPath,
+  ], { stdio: ["ignore", "ignore", "pipe"], timeout: 120000 });
+}
+
+function downscaleClip(ffmpegPath, srcPath) {
+  const dstPath = srcPath.replace(/\.webm$/, "") + ".small.webm";
+  cp.execFileSync(ffmpegPath, [
+    "-y", "-i", srcPath, "-vf", "scale=iw/2:-2",
+    "-c:v", "libvpx", "-b:v", "500k", dstPath,
+  ], { stdio: ["ignore", "ignore", "pipe"], timeout: 120000 });
+  return dstPath;
+}
+
+function caption(title, vw, kind) {
+  return `${title} — ${vw}px ${kind}`;
+}
+
+// Decision 3/5: composite when a full ffmpeg found both hstack and drawtext;
+// otherwise the raw pair. Budget is enforced per attachment, one downscale retry,
+// then drop-and-report — never fails the pass.
+function buildAttachmentsForViewport(ffmpeg, outDir, slug, title, vw, before, after, budgetBytes) {
+  const haveBoth = before && before.path && !before.missing && after && after.path;
+  let composite = null;
+  const candidates = [];
+
+  if (ffmpeg && ffmpeg.tier === "full" && haveBoth) {
+    const compositePath = path.join(outDir, `${slug}.${vw}.composite.webm`);
+    composite = { path: compositePath, ok: false, error: null };
+    try {
+      buildComposite(ffmpeg.path, before.path, after.path, compositePath, vw, vw === 390 ? 844 : 900);
+      composite.ok = true;
+      candidates.push({ path: compositePath, caption: caption(title, vw, "before/after") });
+    } catch (e) {
+      composite.error = String((e && e.message) || e);
+    }
+  }
+  if (candidates.length === 0) {
+    if (before && before.path) candidates.push({ path: before.path, caption: caption(title, vw, "before") });
+    if (after && after.path) candidates.push({ path: after.path, caption: caption(title, vw, "after") });
+  }
+
+  const attachments = [];
+  const dropped = [];
+  for (const c of candidates) {
+    let bytes;
+    try { bytes = fs.statSync(c.path).size; } catch { continue; }
+    let finalPath = c.path;
+    let downscaled = false;
+    if (bytes > budgetBytes) {
+      if (!ffmpeg) {
+        dropped.push({ path: c.path, bytes, reason: "over budget; no ffmpeg available for downscale" });
+        continue;
+      }
+      try {
+        const dst = downscaleClip(ffmpeg.path, c.path);
+        const dstBytes = fs.statSync(dst).size;
+        if (dstBytes <= budgetBytes) { finalPath = dst; bytes = dstBytes; downscaled = true; }
+        else { dropped.push({ path: dst, bytes: dstBytes, reason: `still over budget (${budgetBytes}B) after downscale` }); continue; }
+      } catch (e) {
+        dropped.push({ path: c.path, bytes, reason: `over budget; downscale failed: ${(e && e.message) || e}` });
+        continue;
+      }
+    }
+    attachments.push({ path: finalPath, caption: c.caption, bytes, downscaled });
+  }
+  return { composite, attachments, dropped };
+}
+
+async function attachResults(root, opts, attachments) {
+  const ghVer = ghVersion();
+  if (attachments.length === 0) return { mode: "local", ghVersion: ghVer, ok: true, error: null };
+
+  const wantAttach = opts.attach !== false;
+  const pr = wantAttach ? resolvePr(root, opts.pr) : null;
+  const canGhAttach = wantAttach && pr && ghVer && semverGte(ghVer, "2.99.0") && ghAuthed();
+
+  if (canGhAttach) {
+    try {
+      const args = ["pr", "comment", pr];
+      for (const a of attachments) args.push("--attach", `${a.path}#${a.caption}`);
+      args.push("--body", "Preview recordings attached below.");
+      cp.execFileSync("gh", args, { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
+      return { mode: "gh", ghVersion: ghVer, ok: true, error: null };
+    } catch (e) {
+      const error = String((e && e.message) || e);
+      console.log(`preview: gh attach failed: ${error}`);
+      return { mode: "gh", ghVersion: ghVer, ok: false, error };
+    }
+  }
+
+  const reason = !wantAttach ? "attach disabled (--no-attach)"
+    : !ghVer ? "gh not found"
+    : !semverGte(ghVer, "2.99.0") ? `gh ${ghVer} predates --attach (needs 2.99.0)`
+    : !ghAuthed() ? "gh not authenticated"
+    : "no PR resolvable";
+  console.log(`preview: ${reason} — drag these into the PR body:`);
+  for (const a of attachments) console.log(`  ${a.path}`);
+  return { mode: "local", ghVersion: ghVer, ok: true, error: null };
+}
+
+async function runAll(root, journeyFiles, config, mergeBase, pw, opts) {
   const previewsRoot = path.join(root, ".claude-runs", "previews");
   fs.mkdirSync(previewsRoot, { recursive: true });
+  const ffmpeg = findFfmpeg();
   const browser = await pw.chromium.launch();
   let teardownApp = () => {};
   const journeys = [];
   const lines = [];
+  const allAttachments = [];
   try {
     if (config.startCmd) {
       try { teardownApp = await bootApp(config.startCmd, root, config.baseUrl, config.readyTimeoutMs); }
@@ -282,17 +479,22 @@ async function runAll(root, journeyFiles, config, mergeBase, pw) {
         const before = await recordBefore(browser, root, previewsRoot, mod, slug, journeyHash, mergeBase, vw, vh, config, outDir, budgetMs);
         const after = await recordAfter(browser, previewsRoot, mod, slug, vw, vh, config, outDir, budgetMs);
         if (after.error) journeyOk = false;
+        const { composite, attachments, dropped } = buildAttachmentsForViewport(
+          ffmpeg, outDir, slug, title, vw, before, after, config.budgetBytes,
+        );
+        allAttachments.push(...attachments);
         viewportResults.push({
           viewport: vw,
           before: { path: before.path, cached: before.cached, missing: before.missing, missingReason: before.missingReason || null },
           after: { path: after.path },
           error: after.error || null,
+          composite, attachments, dropped,
         });
         const beforeState = before.missing ? `missing(${before.missingReason})` : before.cached ? "cached" : "recorded";
         lines.push(`${slug} @${vw}: before=${beforeState} after=${after.error ? `FAILED (${after.error})` : "recorded"}`);
+        for (const d of dropped) lines.push(`${slug} @${vw}: DROPPED ${d.path} (${d.bytes}B) — ${d.reason}`);
       }
 
-      // --- P2: composite + attach hook point ---
       journeys.push({
         slug, title, sinceMain, journeyHash, mergeBase, ok: journeyOk, error: null,
         budgetBytes: config.budgetBytes, userFacingPaths: config.userFacingPaths, viewports: viewportResults,
@@ -302,7 +504,8 @@ async function runAll(root, journeyFiles, config, mergeBase, pw) {
     teardownApp();
     try { await browser.close(); } catch {}
   }
-  return { generatedAt: new Date().toISOString(), journeys, lines };
+  const attach = await attachResults(root, opts, allAttachments);
+  return { generatedAt: new Date().toISOString(), journeys, lines, ffmpeg, attach };
 }
 
 function writeResult(root, result) {
@@ -361,12 +564,15 @@ async function main() {
   try { pw = resolvePlaywright(root); }
   catch { console.log("preview: skipped (playwright not installed)"); return; }
 
-  const result = await runAll(root, journeyFiles, config, mergeBase, pw);
+  const result = await runAll(root, journeyFiles, config, mergeBase, pw, opts);
   writeResult(root, result);
   pruneOldBaselines(root);
 
-  if (opts.json) console.log(JSON.stringify({ generatedAt: result.generatedAt, journeys: result.journeys }));
-  else { for (const line of result.lines) console.log(line); console.log(finalTally(result)); }
+  if (opts.json) {
+    console.log(JSON.stringify({
+      generatedAt: result.generatedAt, ffmpeg: result.ffmpeg, attach: result.attach, journeys: result.journeys,
+    }));
+  } else { for (const line of result.lines) console.log(line); console.log(finalTally(result)); }
 }
 
 function safeExit(e) {
