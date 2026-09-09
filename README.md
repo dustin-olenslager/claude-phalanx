@@ -300,7 +300,7 @@ Reported only, never touched: dirty worktrees, unpushed branches, open-PR branch
 branches (enable *delete branch on merge* on GitHub), stashes, `BLOCKED` sentinels, a
 dirty primary tree, a repo carrying both `TASKS.md` and `docs/claude/in-progress.d/`.
 **Queue truth — `phalanx-docs-reconcile.sh [--apply] [repo]`.** For a repo whose backlog is
-`docs/claude/in-progress.d/` fragments (Panoply / ADR-0004), each fragment is classified by
+`docs/claude/in-progress.d/` fragments (Panoply / ADR-0006), each fragment is classified by
 its branch's pull request: MERGED → a dated row in `completed-features.md` and the fragment is
 deleted; CLOSED-unmerged, orphaned branch, or a pending operator step (migration not applied,
 image not rebuilt) → reported. Run it on a branch and ship the result as a PR; `phalanx-gc.sh`
