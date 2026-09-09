@@ -476,6 +476,171 @@ if command -v git >/dev/null 2>&1; then
   ( cd "$WTR" && git worktree remove --force .claude/worktrees/wt >/dev/null 2>&1 ); rm -rf "$WTR"
 else echo "    SKIP worktree:* (git not installed)"; fi
 
+# ---- pr-preview recorder self-test (ADR-0005) --------------------------------
+if command -v git >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  echo "==> pr-preview recorder sims"
+  PREV="$CLAUDE_DIR/bin/phalanx-record-preview"
+
+  # Fixture history via plumbing (write-tree / commit-tree / update-ref) -- never a
+  # porcelain commit, which a repo-wide PreToolUse gate blocks as a raw Bash-tool
+  # invocation. preview_fixture_simple: one commit, no origin/main, for sims that
+  # never need a merge-base. preview_fixture_history: two commits, HEAD ahead of
+  # origin/main by a user-facing file, for sims keyed off the merge-base.
+  preview_fixture_simple() {
+    local d="$1"; rm -rf "$d"; mkdir -p "$d"
+    GIT_CEILING_DIRECTORIES="$(dirname "$d")"; export GIT_CEILING_DIRECTORIES
+    ( cd "$d" && git init -q )
+    echo x > "$d/a.txt"
+    ( cd "$d" && git add -A )
+    local t c
+    t=$(cd "$d" && git write-tree)
+    c=$(cd "$d" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git "commit-tree" "$t" -m x)
+    ( cd "$d" && git update-ref refs/heads/main "$c" && git symbolic-ref HEAD refs/heads/main )
+  }
+  preview_fixture_history() {
+    local d="$1"; rm -rf "$d"; mkdir -p "$d/src"
+    GIT_CEILING_DIRECTORIES="$(dirname "$d")"; export GIT_CEILING_DIRECTORIES
+    ( cd "$d" && git init -q )
+    echo x > "$d/a.txt"
+    ( cd "$d" && git add -A )
+    local t1 c1 t2 c2
+    t1=$(cd "$d" && git write-tree)
+    c1=$(cd "$d" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git "commit-tree" "$t1" -m x)
+    echo "export const y = 1;" > "$d/src/y.js"
+    ( cd "$d" && git add -A )
+    t2=$(cd "$d" && git write-tree)
+    c2=$(cd "$d" && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git "commit-tree" "$t2" -p "$c1" -m y)
+    ( cd "$d" && git update-ref refs/heads/main "$c2" && git symbolic-ref HEAD refs/heads/main && git update-ref refs/remotes/origin/main "$c1" )
+  }
+
+  # 1: no marker -> exits 0, the real skip string, .claude-runs/previews never created.
+  F1="$(jp "$HOME")/.phalanx-preview-nomark"; preview_fixture_simple "$F1"
+  out=$(cd "$F1" && node "$PREV" 2>&1); code=$?
+  case "$out" in
+    *"preview: skipped (no .phalanx-preview marker)"*)
+      if [ -d "$F1/.claude-runs/previews" ]; then echo "    FAIL preview:no-marker-skips (previews dir created)"; FAIL=1
+      elif [ "$code" -ne 0 ]; then echo "    FAIL preview:no-marker-skips (exit $code)"; FAIL=1
+      else echo "    PASS preview:no-marker-skips"; fi ;;
+    *) echo "    FAIL preview:no-marker-skips got: $out"; FAIL=1;;
+  esac
+  rm -rf "$F1"
+
+  # 2: a sinceMain journey + marker + a user-facing diff on the branch (so the diff
+  # gate passes) -> every viewport's before-run is skipped.
+  F2="$(jp "$HOME")/.phalanx-preview-sincemain"; preview_fixture_history "$F2"
+  mkdir -p "$F2/.phalanx/previews"
+  printf 'export const sinceMain = true;\nexport async function run() {}\n' > "$F2/.phalanx/previews/j.mjs"
+  : > "$F2/.phalanx-preview"
+  out=$(cd "$F2" && node "$PREV" --dry-run --json 2>&1); code=$?
+  ok=$(printf '%s' "$out" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));const bad=j.journeys[0].perViewport.some(v=>v.willRecordBefore!==false);process.stdout.write(bad?"bad":"ok");' 2>/dev/null)
+  if [ "$code" -eq 0 ] && [ "$ok" = "ok" ]; then echo "    PASS preview:since-main-skips-before"; else echo "    FAIL preview:since-main-skips-before got: $out"; FAIL=1; fi
+  rm -rf "$F2"
+
+  # 3: baseline files pre-created at the recorder's OWN computed path -> cache hit on
+  # the re-run, proving the cache key (mergeBase+journeyHash+viewport) is stable
+  # without a browser.
+  F3="$(jp "$HOME")/.phalanx-preview-cachehit"; preview_fixture_history "$F3"
+  mkdir -p "$F3/.phalanx/previews"
+  printf 'export async function run() {}\n' > "$F3/.phalanx/previews/j.mjs"
+  : > "$F3/.phalanx-preview"
+  out1=$(cd "$F3" && node "$PREV" --dry-run --json 2>&1)
+  printf '%s' "$out1" | node -e '
+    const fs=require("fs"), path=require("path");
+    const j=JSON.parse(fs.readFileSync(0,"utf8"));
+    for (const v of j.journeys[0].perViewport) { fs.mkdirSync(path.dirname(v.baselinePath),{recursive:true}); fs.writeFileSync(v.baselinePath,""); }
+  ' 2>/dev/null
+  out2=$(cd "$F3" && node "$PREV" --dry-run --json 2>&1); code=$?
+  ok=$(printf '%s' "$out2" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));const bad=j.journeys[0].perViewport.some(v=>!v.baselineCached||v.willRecordBefore!==false);process.stdout.write(bad?"bad":"ok");' 2>/dev/null)
+  if [ "$code" -eq 0 ] && [ "$ok" = "ok" ]; then echo "    PASS preview:baseline-cache-hit"; else echo "    FAIL preview:baseline-cache-hit got: $out2"; FAIL=1; fi
+  rm -rf "$F3"
+
+  # 4: PHALANX_FFMPEG probing -- Playwright's own bundled ffmpeg (pad/crop/scale only,
+  # no hstack) classifies "minimal"; a filter list carrying hstack classifies "full".
+  F4="$(jp "$HOME")/.phalanx-preview-ffmpeg"; preview_fixture_simple "$F4"
+  mkdir -p "$F4/.phalanx/previews"
+  printf 'export async function run() {}\n' > "$F4/.phalanx/previews/j.mjs"
+  : > "$F4/.phalanx-preview"
+  cat > "$F4/ffmpeg-minimal.sh" <<'EOF'
+#!/usr/bin/env bash
+cat <<'FILTERS'
+ T.. scale             V->V       Scale the input video.
+ T.. crop              V->V       Crop the input video.
+ T.. pad               V->V       Pad the input video.
+FILTERS
+EOF
+  chmod +x "$F4/ffmpeg-minimal.sh"
+  out=$(cd "$F4" && PHALANX_FFMPEG="$F4/ffmpeg-minimal.sh" node "$PREV" --dry-run --json --force 2>&1); code=$?
+  tier=$(printf '%s' "$out" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write((j.ffmpeg&&j.ffmpeg.tier)||"")' 2>/dev/null)
+  if [ "$code" -eq 0 ] && [ "$tier" = "minimal" ]; then echo "    PASS preview:no-ffmpeg-degrades"; else echo "    FAIL preview:no-ffmpeg-degrades got: $out"; FAIL=1; fi
+
+  cat > "$F4/ffmpeg-full.sh" <<'EOF'
+#!/usr/bin/env bash
+cat <<'FILTERS'
+ T.. scale             V->V       Scale the input video.
+ T.. hstack            V->V       Stack video inputs horizontally.
+FILTERS
+EOF
+  chmod +x "$F4/ffmpeg-full.sh"
+  out2=$(cd "$F4" && PHALANX_FFMPEG="$F4/ffmpeg-full.sh" node "$PREV" --dry-run --json --force 2>&1); code2=$?
+  tier2=$(printf '%s' "$out2" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write((j.ffmpeg&&j.ffmpeg.tier)||"")' 2>/dev/null)
+  if [ "$code2" -eq 0 ] && [ "$tier2" = "full" ]; then echo "    PASS preview:no-ffmpeg-degrades (full tier detected)"; else echo "    FAIL preview:no-ffmpeg-degrades (full tier detected) got: $out2"; FAIL=1; fi
+  rm -rf "$F4"
+
+  # 5: gh below 2.99.0 -> the recorder degrades to local/attach-less mode and must
+  # never shell out to `gh pr comment`.
+  F5="$(jp "$HOME")/.phalanx-preview-oldgh"; preview_fixture_simple "$F5"
+  mkdir -p "$F5/.phalanx/previews"
+  printf 'export async function run() {}\n' > "$F5/.phalanx/previews/j.mjs"
+  : > "$F5/.phalanx-preview"
+  mkdir -p "$F5/ghbin"; : > "$F5/gh.log"
+  cat > "$F5/ghbin/gh" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$F5/gh.log"
+if [ "\$1" = "--version" ]; then echo "gh version 2.98.0 (2026-08-20)"; exit 0; fi
+exit 1
+EOF
+  chmod +x "$F5/ghbin/gh"
+  out=$(cd "$F5" && PATH="$F5/ghbin:$PATH" node "$PREV" --dry-run --json --force 2>&1); code=$?
+  ghver=$(printf '%s' "$out" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write(j.ghVersion||"")' 2>/dev/null)
+  if [ "$code" -eq 0 ] && [ "$ghver" = "2.98.0" ] && ! grep -q '^pr comment' "$F5/gh.log"; then
+    echo "    PASS preview:old-gh-degrades"
+  else
+    echo "    FAIL preview:old-gh-degrades got: $out (gh.log: $(cat "$F5/gh.log" 2>/dev/null))"; FAIL=1
+  fi
+  rm -rf "$F5"
+
+  # 6: the single most important sim -- a journey whose module body throws at import
+  # must never touch the verify flag phalanx-verify already wrote. Never blocks.
+  # Two runs against the SAME throwing journey: the real (non-dry) path proves the
+  # soft-gate never blocks even when it exits before importing anything (e.g. no
+  # Playwright on this box); the --dry-run --json path proves the actual claim --
+  # journey discovery + the dynamic import DO happen in dry-run, so a throwing
+  # module body is captured as a per-journey loadError instead of crashing.
+  F6="$(jp "$HOME")/.phalanx-preview-neverblocks"; preview_fixture_simple "$F6"
+  ( cd "$F6" && "$CLAUDE_DIR/bin/phalanx-verify" true ) >/dev/null 2>&1 || true
+  FLAG="$F6/.claude-runs/verified.main"
+  before=$(cat "$FLAG" 2>/dev/null || echo MISSING)
+  beforeMtime=$(stat -c %Y "$FLAG" 2>/dev/null || echo MISSING)
+  mkdir -p "$F6/.phalanx/previews"
+  printf 'throw new Error("boom at import");\nexport async function run() {}\n' > "$F6/.phalanx/previews/j.mjs"
+  : > "$F6/.phalanx-preview"
+  out=$(cd "$F6" && node "$PREV" --force 2>&1); code=$?
+  outDry=$(cd "$F6" && node "$PREV" --dry-run --json --force 2>&1); codeDry=$?
+  after=$(cat "$FLAG" 2>/dev/null || echo MISSING)
+  afterMtime=$(stat -c %Y "$FLAG" 2>/dev/null || echo MISSING)
+  loadErr=$(printf '%s' "$outDry" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write((j.journeys&&j.journeys[0]&&j.journeys[0].loadError)||"")' 2>/dev/null)
+  case "$loadErr" in *"boom at import"*) loadErrOk=1;; *) loadErrOk=0;; esac
+  if [ "$code" -eq 0 ] && [ "$codeDry" -eq 0 ] && [ "$loadErrOk" -eq 1 ] \
+    && [ "$before" != "MISSING" ] && [ "$before" = "$after" ] && [ "$beforeMtime" = "$afterMtime" ]; then
+    echo "    PASS preview:never-blocks"
+  else
+    echo "    FAIL preview:never-blocks got: $out / dry: $outDry (flag before='$before' after='$after' mtime before='$beforeMtime' after='$afterMtime' loadErr='$loadErr')"; FAIL=1
+  fi
+  rm -rf "$F6"
+else
+  echo "    SKIP preview:* (git or node not installed)"
+fi
+
 # item 4 context-budget: occupancy from the REAL usage signal (last transcript usage
 # line) + env-derived window (PHALANX_CTX_WINDOW, default ~1M) -- NOT raw byte size.
 CBJ="$TG/context-budget.js"
