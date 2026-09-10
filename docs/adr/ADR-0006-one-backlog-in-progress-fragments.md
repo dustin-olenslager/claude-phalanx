@@ -1,8 +1,9 @@
-# ADR-0004 — One backlog: `docs/claude/in-progress.d/` fragments
+# ADR-0006 — One backlog: `docs/claude/in-progress.d/` fragments
 
 - **Status:** Accepted (2026-08-30)
 - **Deciders:** Operator, Phalanx maintainer, Panoply maintainer
 - **Relates to:** [ADR-0003](ADR-0003-worktree-isolation.md); Panoply `.claude/rules/documentation.md`
+- **Renumbering:** This decision was originally filed as ADR-0004. It was renumbered to 0006 on 2026-09-09 to resolve a collision with ADR-0004 (framework consolidation), which was accepted first and keeps that number.
 
 ## Context
 

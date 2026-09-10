@@ -3,7 +3,7 @@
 #
 #   phalanx-docs-reconcile.sh [--apply] [REPO]        (default: cwd, dry run)
 #
-# The queue is docs/claude/in-progress.d/<slug>.md, one fragment per task (ADR-0004 /
+# The queue is docs/claude/in-progress.d/<slug>.md, one fragment per task (ADR-0006 /
 # Panoply). A fragment leaves the queue when its work ships -- but nothing enforced that,
 # so fragments saying "IN REVIEW (task/foo)" outlived their merged PRs by weeks and the
 # queue stopped meaning anything. This script, per fragment:

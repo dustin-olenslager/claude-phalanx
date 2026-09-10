@@ -193,7 +193,7 @@ gc_repo() {
       local q; q="$(GH_TOKEN="${GH_TOKEN:-}" timeout 150 "$DR" "$top" 2>/dev/null | tail -1)"
       case "$q" in *"ship=0 "*) ;; *) warn "queue drift: ${q#queue: } -- run phalanx-docs-reconcile.sh --apply $top (on a branch)";; esac
     fi
-    [ -f "$top/TASKS.md" ] && info "TASKS.md ($(grep -c '^- \[ \]' "$top/TASKS.md") open) + in-progress.d ($(ls "$top/docs/claude/in-progress.d" | wc -l) fragments) -- loop reads TASKS.md only until the ADR-0004 sweep lands"
+    [ -f "$top/TASKS.md" ] && info "TASKS.md ($(grep -c '^- \[ \]' "$top/TASKS.md") open) + in-progress.d ($(ls "$top/docs/claude/in-progress.d" | wc -l) fragments) -- loop reads TASKS.md only until the ADR-0006 sweep lands"
   fi
   } > "$out" 2>&1
   if [ -s "$out" ] || [ -z "${PHALANX_GC_QUIET:-}" ]; then echo "## $top ($M)"; cat "$out"; fi
