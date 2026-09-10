@@ -13,6 +13,12 @@
 // Optional exports the recorder reads: `title` (defaults to the slug), `sinceMain`
 // (true skips the before-run entirely, for a screen that doesn't exist on main yet),
 // `viewports` (narrows the default [390, 1440]), `budgetMs` (per-clip timeout, default 60000).
+//
+// For an app behind SSO (e.g. Google) that can't log in by filling a form, set
+// `storageState` in .phalanx-preview to a Playwright storage-state JSON path (resolved
+// relative to the repo root) — the recorder starts the context already signed in. That
+// file holds a live session: never commit it. Missing/unreadable → warns and records
+// signed-out; never fails the pass.
 
 export const title = "Example journey — homepage search";
 export const sinceMain = false;

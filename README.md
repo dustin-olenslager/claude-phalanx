@@ -222,10 +222,17 @@ pass shows its work, not just a green check.
 
 - **Config** — `.phalanx-preview` is JSON, all keys optional:
   `baseUrl` (`http://127.0.0.1:3000`), `startCmd` (`null`), `readyTimeoutMs` (`120000`),
-  `viewports` (`[390, 1440]`), `budgetBytes` (`10485760`), and `userFacingPaths`
-  (`["src/**","app/**","components/**","pages/**","public/**","styles/**"]`). Recording only
+  `viewports` (`[390, 1440]`), `budgetBytes` (`10485760`), `userFacingPaths`
+  (`["src/**","app/**","components/**","pages/**","public/**","styles/**"]`), and
+  `storageState` (`null`) — a path to a Playwright storage-state JSON file, resolved
+  relative to the repo root (absolute paths pass through). Recording only
   runs when the branch diff (`git diff <merge-base>...HEAD`) touches a `userFacingPaths` glob;
   `--force` bypasses that gate for an on-demand run.
+- **`storageState`** starts every journey already signed in — the only way to preview an
+  app behind SSO (e.g. Google), which the recorder must never drive by filling a login
+  form. This file holds a live session: **do not commit it**. Missing or unreadable →
+  the recorder prints an unmissable warning naming the resolved path and records
+  signed-out instead of failing the pass.
 - **Journeys** live at `.phalanx/previews/<slug>.mjs`, one committed ES module per preview:
   `export async function run(page, ctx)` plus optional `title`, `sinceMain` (skip the
   before-run for a screen that doesn't exist on `main`), `viewports`, `budgetMs`. The recorder
