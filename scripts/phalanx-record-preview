@@ -17,6 +17,7 @@ const DEFAULT_CONFIG = {
   viewports: [390, 1440],
   budgetBytes: 10485760,
   userFacingPaths: ["src/**", "app/**", "components/**", "pages/**", "public/**", "styles/**"],
+  storageState: null,
 };
 
 function loadHookLib() {
@@ -96,6 +97,17 @@ function computeUserFacing(root, mergeBase, patterns) {
   const diffed = getDiffPaths(root, mergeBase);
   const changed = diffed.filter((f) => patterns.some((pat) => globMatch(pat, f)));
   return { changed, gated: changed.length === 0 };
+}
+
+// storageState lets a journey start already signed in (e.g. Google SSO, which the
+// recorder must never drive by hand). Resolved relative to the repo root; missing
+// or unreadable is a warning, never a failure — the clip just records signed-out.
+function resolveStorageState(root, config) {
+  if (!config.storageState) return null;
+  const resolved = path.isAbsolute(config.storageState) ? config.storageState : path.join(root, config.storageState);
+  let exists = false;
+  try { fs.accessSync(resolved, fs.constants.R_OK); exists = true; } catch {}
+  return { path: resolved, exists };
 }
 
 function resolveJourneyFiles(root, previewsDir, opts) {
@@ -291,13 +303,15 @@ function withTimeout(promise, ms) {
 // Records one clip: launches a context with video capture, runs the journey under
 // budgetMs, and closes the context regardless of outcome so the video always
 // flushes. Shared by the after-run and the before cache-miss recording.
-async function recordClip(browser, previewsRoot, runFn, vw, vh, ctx, budgetMs) {
+async function recordClip(browser, previewsRoot, runFn, vw, vh, ctx, budgetMs, storageStatePath) {
   const tmpDir = fs.mkdtempSync(path.join(previewsRoot, "tmp-"));
   try {
-    const context = await browser.newContext({
+    const contextOpts = {
       viewport: { width: vw, height: vh },
       recordVideo: { dir: tmpDir, size: { width: vw, height: vh } },
-    });
+    };
+    if (storageStatePath) contextOpts.storageState = storageStatePath;
+    const context = await browser.newContext(contextOpts);
     const page = await context.newPage();
     const video = page.video();
     let runErr = null;
@@ -315,7 +329,7 @@ async function recordClip(browser, previewsRoot, runFn, vw, vh, ctx, budgetMs) {
 
 async function recordAfter(browser, previewsRoot, mod, slug, vw, vh, config, outDir, budgetMs) {
   const ctx = { baseUrl: config.baseUrl, viewport: vw, side: "after", slug, outDir };
-  const { error, recordedPath } = await recordClip(browser, previewsRoot, mod.run, vw, vh, ctx, budgetMs);
+  const { error, recordedPath } = await recordClip(browser, previewsRoot, mod.run, vw, vh, ctx, budgetMs, config.storageState);
   if (error) return { path: null, error };
   const destPath = path.join(outDir, `${slug}.${vw}.after.webm`);
   try { fs.renameSync(recordedPath, destPath); }
@@ -352,7 +366,7 @@ async function recordBefore(browser, root, previewsRoot, mod, slug, journeyHash,
     // Always the journey file loaded from HEAD, never a worktree copy — the same
     // code drives both checkouts so the two clips differ only by app behavior.
     const ctx = { baseUrl: config.baseUrl, viewport: vw, side: "before", slug, outDir };
-    const { error, recordedPath } = await recordClip(browser, previewsRoot, mod.run, vw, vh, ctx, budgetMs);
+    const { error, recordedPath } = await recordClip(browser, previewsRoot, mod.run, vw, vh, ctx, budgetMs, config.storageState);
     if (error) return { path: null, cached: false, missing: true, missingReason: `before-run failed: ${error}` };
     fs.renameSync(recordedPath, baselinePath);
     return { path: baselinePath, cached: false, missing: false };
@@ -588,10 +602,16 @@ async function main() {
   try { config = parseConfig(markerPath); }
   catch (e) { console.log(`preview: skipped (invalid .phalanx-preview: ${e.message})`); return; }
 
+  const storageState = resolveStorageState(root, config);
+  if (storageState && !storageState.exists) {
+    console.log(`preview: WARNING storageState "${storageState.path}" not found or unreadable — recording SIGNED-OUT`);
+  }
+  config.storageState = storageState && storageState.exists ? storageState.path : null;
+
   const mergeBase = getMergeBase(root);
   const userFacing = computeUserFacing(root, mergeBase, config.userFacingPaths);
   if (userFacing.gated && !opts.force) {
-    if (opts.dryRun) console.log(JSON.stringify({ dryRun: true, mergeBase, userFacing }, null, 2));
+    if (opts.dryRun) console.log(JSON.stringify({ dryRun: true, mergeBase, userFacing, storageState }, null, 2));
     else console.log("preview: skipped (no user-facing paths changed)");
     return;
   }
@@ -602,7 +622,7 @@ async function main() {
 
   if (opts.dryRun) {
     const plan = await buildDryRunPlan(root, journeyFiles, config, mergeBase);
-    console.log(JSON.stringify({ ...plan, userFacing }, null, 2));
+    console.log(JSON.stringify({ ...plan, userFacing, storageState }, null, 2));
     return;
   }
 

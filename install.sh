@@ -680,6 +680,37 @@ EOF
     echo "    FAIL preview:never-blocks got: $out / dry: $outDry (flag before='$before' after='$after' mtime before='$beforeMtime' after='$afterMtime' loadErr='$loadErr')"; FAIL=1
   fi
   rm -rf "$F6"
+
+  # 7: storageState configured and present -- the resolved path (relative to repo
+  # root) and its existence must reach the dry-run JSON, proving it would reach
+  # browser.newContext without needing a browser in this sim.
+  F7="$(jp "$HOME")/.phalanx-preview-ss-passed"; preview_fixture_simple "$F7"
+  mkdir -p "$F7/.phalanx/previews"
+  printf 'export async function run() {}\n' > "$F7/.phalanx/previews/j.mjs"
+  printf '{"cookies":[],"origins":[]}\n' > "$F7/state.json"
+  printf '{"storageState":"state.json"}\n' > "$F7/.phalanx-preview"
+  out=$(cd "$F7" && node "$PREV" --dry-run --json --force 2>&1); code=$?
+  want="$F7/state.json"
+  if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -qF "\"path\": \"$want\"" && printf '%s' "$out" | grep -qF '"exists": true'; then
+    echo "    PASS preview:storagestate-passed"
+  else
+    echo "    FAIL preview:storagestate-passed got: $out"; FAIL=1
+  fi
+  rm -rf "$F7"
+
+  # 8: storageState configured but the file is absent -- must warn unmissably (naming
+  # the resolved path) and still exit 0, never blocking the pass.
+  F8="$(jp "$HOME")/.phalanx-preview-ss-missing"; preview_fixture_simple "$F8"
+  mkdir -p "$F8/.phalanx/previews"
+  printf 'export async function run() {}\n' > "$F8/.phalanx/previews/j.mjs"
+  printf '{"storageState":"missing-state.json"}\n' > "$F8/.phalanx-preview"
+  out=$(cd "$F8" && node "$PREV" --dry-run --json --force 2>&1); code=$?
+  case "$out" in
+    *"WARNING"*"missing-state.json"*"SIGNED-OUT"*)
+      if [ "$code" -eq 0 ]; then echo "    PASS preview:storagestate-missing-warns"; else echo "    FAIL preview:storagestate-missing-warns (exit $code)"; FAIL=1; fi ;;
+    *) echo "    FAIL preview:storagestate-missing-warns got: $out"; FAIL=1;;
+  esac
+  rm -rf "$F8"
 else
   echo "    SKIP preview:* (git or node not installed)"
 fi
