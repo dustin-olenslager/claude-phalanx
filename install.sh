@@ -205,6 +205,19 @@ if [ -n "$simtop" ]; then
   exit 1
 fi
 export TMPDIR="$SIMROOT"
+# Three fixture roots (the loop-integrity and worktree sims) are deliberately anchored at
+# $HOME rather than $SIMROOT, because the gate's metaRe excludes ^/tmp/ and a fixture under
+# /tmp would mask the very edit-gating those sims assert. That makes $HOME a second scratch
+# root, so it needs the same guarantee: a $HOME inside a work tree (a dotfiles repo is the
+# common case) puts worktree-removal fixtures back inside a real repo.
+homtop="$(git -C "$HOME" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$homtop" ]; then
+  echo "==> ABORT: \$HOME ($HOME) is inside the git work tree $homtop"
+  echo "    The loop-integrity and worktree sims root their fixtures at \$HOME and drive"
+  echo "    worktree REMOVAL against them -- running them with a \$HOME inside a work tree"
+  echo "    deletes that tree. Run the self-test with HOME pointed outside any git repo."
+  exit 1
+fi
 # clean the gate state via NODE, not the shell: native-Windows node resolves the literal
 # "/tmp/..." base to a different location than Git Bash's /tmp mount, so a shell rm would
 # miss it and a stale 'planned'/'verified' flag would survive and skew later cases.
