@@ -186,6 +186,38 @@ node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$CLAUD
 echo "==> verify simulations"
 FAIL=0
 SID="phalanx-selftest"
+# ---- hermetic sim scratch root ----------------------------------------------
+# The sims build git fixtures under TMPDIR and then drive run-work.sh / phalanx-gc.sh
+# at them -- both of which call `git worktree remove --force`. phalanx-verify runs its
+# child with TMPDIR pointed INSIDE the repo being verified (right isolation for an
+# ordinary verify command), so an INHERITED TMPDIR put those fixtures in the live work
+# tree, their git resolution climbed into the real repo, and `phalanx-verify bash
+# install.sh` deleted the worktree it was running in. The sims get a root of their own
+# and never inherit one; every child (run-work.sh, phalanx-gc.sh, node, mktemp) sees it.
+SIMROOT="${PHALANX_SELFTEST_TMPDIR:-/tmp}/phalanx-selftest.$$"
+rm -rf "$SIMROOT"; mkdir -p "$SIMROOT"
+simtop="$(git -C "$SIMROOT" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$simtop" ]; then
+  echo "==> ABORT: sim scratch root $SIMROOT is inside the git work tree $simtop"
+  echo "    The sims drive worktree REMOVAL against fixtures under it -- running them"
+  echo "    inside a work tree deletes that tree. Point PHALANX_SELFTEST_TMPDIR at a"
+  echo "    directory outside any git repo and re-run."
+  exit 1
+fi
+export TMPDIR="$SIMROOT"
+# Three fixture roots (the loop-integrity and worktree sims) are deliberately anchored at
+# $HOME rather than $SIMROOT, because the gate's metaRe excludes ^/tmp/ and a fixture under
+# /tmp would mask the very edit-gating those sims assert. That makes $HOME a second scratch
+# root, so it needs the same guarantee: a $HOME inside a work tree (a dotfiles repo is the
+# common case) puts worktree-removal fixtures back inside a real repo.
+homtop="$(git -C "$HOME" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$homtop" ]; then
+  echo "==> ABORT: \$HOME ($HOME) is inside the git work tree $homtop"
+  echo "    The loop-integrity and worktree sims root their fixtures at \$HOME and drive"
+  echo "    worktree REMOVAL against them -- running them with a \$HOME inside a work tree"
+  echo "    deletes that tree. Run the self-test with HOME pointed outside any git repo."
+  exit 1
+fi
 # clean the gate state via NODE, not the shell: native-Windows node resolves the literal
 # "/tmp/..." base to a different location than Git Bash's /tmp mount, so a shell rm would
 # miss it and a stale 'planned'/'verified' flag would survive and skew later cases.
@@ -239,6 +271,17 @@ for a in caveman-anchor app-pipeline-anchor ts-arch-anchor phase-anchor; do
   if "$CLAUDE_DIR/$a.sh" | node -e 'JSON.parse(require("fs").readFileSync(0,"utf8"))' >/dev/null 2>&1; then
     echo "    PASS anchor:$a"; else echo "    FAIL anchor:$a (invalid JSON)"; FAIL=1; fi
 done
+
+# ---- hermetic scratch: a fixture must land outside every work tree -----------
+# Regression guard (2026-09-10) for the TMPDIR-inheritance bug above: wrapped in
+# phalanx-verify, every fixture used to be created inside the repo under test, so the
+# supervisor sims drove `git worktree remove --force` at the REAL repo and destroyed it.
+FXD="$(mktd)"
+fxtop="$(git -C "$FXD" rev-parse --show-toplevel 2>/dev/null || true)"
+repotop="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$fxtop" ]; then echo "    PASS hermetic:fixtures-outside-repo-under-test"
+else echo "    FAIL hermetic:fixtures-outside-repo-under-test (fixture $FXD resolves to git tree '$fxtop'; repo under test '$repotop')"; FAIL=1; fi
+rm -rf "$FXD"
 
 # phase-anchor MODE/PHASE for: no-state, build, maintain, optimize
 for st in none build maintain optimize; do
@@ -728,6 +771,7 @@ rm -rf "$WDIR"
 
 node -e 'const fs=require("fs");for(const b of ["/tmp/phalanx-pipeline","/tmp/phalanx-tsarch"])try{fs.rmSync(b,{recursive:true,force:true})}catch{}' 2>/dev/null || true
 rm -rf "$TG" 2>/dev/null || true
+unset TMPDIR; rm -rf "$SIMROOT" 2>/dev/null || true
 if [ "$FAIL" -ne 0 ]; then echo "==> SELF-TEST FAILED"; exit 1; fi
 
 # ---- optional daily auto-update cron ----------------------------------------
