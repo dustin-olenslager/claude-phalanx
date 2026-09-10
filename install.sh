@@ -750,6 +750,87 @@ EOF
     *) echo "    FAIL preview:hosted-urls-partial-falls-back got: $out"; FAIL=1;;
   esac
   rm -rf "$F10"
+
+  # 11: afterUrl:"github-deployment" -- a stubbed `gh` resolves owner/repo from the
+  # `origin` remote, matches HEAD's sha against a deployment, then reads its most
+  # recent successful status. The resolved environment_url must reach --dry-run --json.
+  F11="$(jp "$HOME")/.phalanx-preview-afterurl-resolve"; preview_fixture_simple "$F11"
+  mkdir -p "$F11/.phalanx/previews"
+  printf 'export async function run() {}\n' > "$F11/.phalanx/previews/j.mjs"
+  printf '{"beforeUrl":"https://frame-forge.vercel.app","afterUrl":"github-deployment"}\n' > "$F11/.phalanx-preview"
+  ( cd "$F11" && git remote add origin https://github.com/10-Ton-Productions/frame-forge.git )
+  SHA11=$(cd "$F11" && git rev-parse HEAD)
+  mkdir -p "$F11/ghbin"
+  cat > "$F11/ghbin/gh" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = "--version" ]; then echo "gh version 2.99.0 (2026-08-20)"; exit 0; fi
+if [ "\$1" = "auth" ]; then exit 0; fi
+if [ "\$1" = "api" ]; then
+  case "\$2" in
+    *statuses) echo '[{"state":"success","environment_url":"https://frame-forge-9v9pchwtc-frame-forge-now.vercel.app"}]'; exit 0 ;;
+    *deployments*) echo '[{"id":6363271249,"sha":"$SHA11"}]'; exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+exit 1
+EOF
+  chmod +x "$F11/ghbin/gh"
+  out=$(cd "$F11" && PATH="$F11/ghbin:$PATH" node "$PREV" --dry-run --json --force 2>&1); code=$?
+  if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -qF 'https://frame-forge-9v9pchwtc-frame-forge-now.vercel.app'; then
+    echo "    PASS preview:afterurl-resolves-deployment"
+  else
+    echo "    FAIL preview:afterurl-resolves-deployment got: $out"; FAIL=1
+  fi
+  rm -rf "$F11"
+
+  # 12: afterUrl:"github-deployment" with no matching deployment (`gh api` returns
+  # `[]`) -- must warn WHY and skip recording entirely, never fall back to boot mode,
+  # never block (exit 0).
+  F12="$(jp "$HOME")/.phalanx-preview-afterurl-unresolved"; preview_fixture_simple "$F12"
+  mkdir -p "$F12/.phalanx/previews"
+  printf 'export async function run() {}\n' > "$F12/.phalanx/previews/j.mjs"
+  printf '{"beforeUrl":"https://frame-forge.vercel.app","afterUrl":"github-deployment"}\n' > "$F12/.phalanx-preview"
+  ( cd "$F12" && git remote add origin https://github.com/10-Ton-Productions/frame-forge.git )
+  mkdir -p "$F12/ghbin"
+  cat > "$F12/ghbin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "gh version 2.99.0 (2026-08-20)"; exit 0; fi
+if [ "$1" = "auth" ]; then exit 0; fi
+if [ "$1" = "api" ]; then echo '[]'; exit 0; fi
+exit 1
+EOF
+  chmod +x "$F12/ghbin/gh"
+  out=$(cd "$F12" && PATH="$F12/ghbin:$PATH" node "$PREV" --dry-run --json --force 2>&1); code=$?
+  case "$out" in
+    *"WARNING"*"github-deployment"*"skipping recording"*)
+      if [ "$code" -eq 0 ]; then echo "    PASS preview:afterurl-unresolved-skips"; else echo "    FAIL preview:afterurl-unresolved-skips (exit $code)"; FAIL=1; fi ;;
+    *) echo "    FAIL preview:afterurl-unresolved-skips got: $out"; FAIL=1;;
+  esac
+  rm -rf "$F12"
+
+  # 13: extraHTTPHeaders "${ENV_VAR}" expansion -- with the var set, the header NAME
+  # reaches --dry-run --json and the secret VALUE appears nowhere in the output; with
+  # it unset, the warning names the variable and the header is omitted from the plan.
+  F13="$(jp "$HOME")/.phalanx-preview-headers"; preview_fixture_simple "$F13"
+  mkdir -p "$F13/.phalanx/previews"
+  printf 'export async function run() {}\n' > "$F13/.phalanx/previews/j.mjs"
+  printf '{"extraHTTPHeaders":{"X-Vercel-Protection-Bypass":"${PHALANX_TEST_SECRET}"}}\n' > "$F13/.phalanx-preview"
+  SECRET13="s3cr3t-value-only-in-env-9f2a"
+  outSet=$(cd "$F13" && PHALANX_TEST_SECRET="$SECRET13" node "$PREV" --dry-run --json --force 2>&1); codeSet=$?
+  outUnset=$(cd "$F13" && node "$PREV" --dry-run --json --force 2>&1); codeUnset=$?
+  nameInSet=$(printf '%s' "$outSet" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write((j.extraHTTPHeaders&&j.extraHTTPHeaders.names&&j.extraHTTPHeaders.names.includes("X-Vercel-Protection-Bypass"))?"yes":"no");' 2>/dev/null)
+  jsonUnset=$(printf '%s' "$outUnset" | sed -n '/^{/,$p')
+  nameInUnset=$(printf '%s' "$jsonUnset" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write((j.extraHTTPHeaders&&j.extraHTTPHeaders.names&&j.extraHTTPHeaders.names.includes("X-Vercel-Protection-Bypass"))?"yes":"no");' 2>/dev/null)
+  if [ "$codeSet" -eq 0 ] && [ "$codeUnset" -eq 0 ] \
+    && [ "$nameInSet" = "yes" ] && [ "$nameInUnset" = "no" ] \
+    && ! printf '%s' "$outSet" | grep -qF "$SECRET13" \
+    && printf '%s' "$outUnset" | grep -qF "WARNING" \
+    && printf '%s' "$outUnset" | grep -qF "PHALANX_TEST_SECRET"; then
+    echo "    PASS preview:headers-env-expansion"
+  else
+    echo "    FAIL preview:headers-env-expansion got set:$outSet / unset:$outUnset"; FAIL=1
+  fi
+  rm -rf "$F13"
 else
   echo "    SKIP preview:* (git or node not installed)"
 fi
