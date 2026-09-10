@@ -4,7 +4,13 @@
 // randomness, no `Date.now()`-keyed selectors, no depending on prior journey state.
 //
 // ctx contract (supplied by the recorder, not by you):
-//   ctx.baseUrl   string  the app's base URL (from .phalanx-preview's "baseUrl")
+//   ctx.baseUrl   string  the URL for the side currently recording. Default mode: the
+//                         app is booted locally and this is .phalanx-preview's "baseUrl"
+//                         for both sides. Hosted-URL mode (both "beforeUrl" and
+//                         "afterUrl" set in .phalanx-preview -- no local boot at all,
+//                         e.g. a Vercel-hosted repo): this is "beforeUrl" while
+//                         ctx.side === "before" and "afterUrl" while ctx.side === "after".
+//                         Either way the journey code is unchanged.
 //   ctx.viewport  number  390 or 1440 (or whatever this journey's `viewports` narrows to)
 //   ctx.side      "before" | "after"
 //   ctx.slug      string  this journey's file name, minus .mjs

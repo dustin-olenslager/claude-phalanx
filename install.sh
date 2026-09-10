@@ -711,6 +711,45 @@ EOF
     *) echo "    FAIL preview:storagestate-missing-warns got: $out"; FAIL=1;;
   esac
   rm -rf "$F8"
+
+  # 9: hosted-URL mode (both beforeUrl + afterUrl set) -- must never touch the
+  # merge-base worktree or startCmd boot path. Asserted via --dry-run --json (mode +
+  # per-side URLs), never by actually spawning a browser: startCmd is set to create a
+  # sentinel file, and its absence after a dry-run corroborates the JSON's claim.
+  F9="$(jp "$HOME")/.phalanx-preview-hosted-skip-boot"; preview_fixture_simple "$F9"
+  mkdir -p "$F9/.phalanx/previews"
+  printf 'export async function run() {}\n' > "$F9/.phalanx/previews/j.mjs"
+  printf '{"beforeUrl":"https://example.com/before","afterUrl":"https://example.com/after","startCmd":"touch SENTINEL"}\n' > "$F9/.phalanx-preview"
+  out=$(cd "$F9" && node "$PREV" --dry-run --json --force 2>&1); code=$?
+  if [ "$code" -eq 0 ] \
+    && printf '%s' "$out" | grep -qF '"mode": "hosted"' \
+    && printf '%s' "$out" | grep -qF '"beforeUrl": "https://example.com/before"' \
+    && printf '%s' "$out" | grep -qF '"afterUrl": "https://example.com/after"' \
+    && [ ! -e "$F9/SENTINEL" ] \
+    && [ -z "$(find "$F9/.claude-runs" -maxdepth 3 -name 'wt-*' 2>/dev/null)" ]; then
+    echo "    PASS preview:hosted-urls-skip-boot"
+  else
+    echo "    FAIL preview:hosted-urls-skip-boot got: $out"; FAIL=1
+  fi
+  rm -rf "$F9"
+
+  # 10: only ONE of beforeUrl/afterUrl set -- must warn unmissably and fall back to
+  # the default boot mode rather than half-applying hosted mode.
+  F10="$(jp "$HOME")/.phalanx-preview-hosted-partial"; preview_fixture_simple "$F10"
+  mkdir -p "$F10/.phalanx/previews"
+  printf 'export async function run() {}\n' > "$F10/.phalanx/previews/j.mjs"
+  printf '{"afterUrl":"https://example.com/after"}\n' > "$F10/.phalanx-preview"
+  out=$(cd "$F10" && node "$PREV" --dry-run --json --force 2>&1); code=$?
+  case "$out" in
+    *"WARNING"*"beforeUrl"*"afterUrl"*"boot mode"*)
+      if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -qF '"mode": "boot"'; then
+        echo "    PASS preview:hosted-urls-partial-falls-back"
+      else
+        echo "    FAIL preview:hosted-urls-partial-falls-back (mode not boot) got: $out"; FAIL=1
+      fi ;;
+    *) echo "    FAIL preview:hosted-urls-partial-falls-back got: $out"; FAIL=1;;
+  esac
+  rm -rf "$F10"
 else
   echo "    SKIP preview:* (git or node not installed)"
 fi
