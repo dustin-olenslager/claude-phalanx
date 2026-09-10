@@ -353,8 +353,25 @@ function resolveDeploymentAfterUrl(root, config, opts) {
   const env = config.previewEnvironment;
   const deployments = ghApiJson([`repos/${repoInfo.owner}/${repoInfo.repo}/deployments?environment=${encodeURIComponent(env)}`]);
   if (!Array.isArray(deployments) || deployments.length === 0) return fail(`found no deployment for environment "${env}"`);
-  const deployment = deployments.find((d) => d && d.sha === sha);
-  if (!deployment) return fail(`found no deployment matching sha ${sha.slice(0, 12)} in environment "${env}"`);
+  // Prefer an exact match (the common case: one push since the PR opened). Some
+  // GitHub-integrated hosts (observed against Vercel, 2026-09-10) mint exactly one
+  // Deployment object per branch on its first push and never create or update one
+  // for later pushes, so an exact match never lands again after that first push.
+  // Fall back to the newest deployment whose sha is this branch's own history (an
+  // ancestor of the current head) -- ancestry, not sha equality, is what actually
+  // scopes "this PR's deployment" without a reliable ref/branch field to match on.
+  let deployment = deployments.find((d) => d && d.sha === sha);
+  if (!deployment) {
+    const onThisBranch = deployments.filter((d) => {
+      if (!d || !d.sha) return false;
+      try {
+        cp.execFileSync("git", ["merge-base", "--is-ancestor", d.sha, sha], { cwd: root, stdio: "ignore" });
+        return true;
+      } catch { return false; }
+    });
+    deployment = [...onThisBranch].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+  }
+  if (!deployment) return fail(`found no deployment on this branch's history (sha ${sha.slice(0, 12)}) in environment "${env}"`);
   const statuses = ghApiJson([`repos/${repoInfo.owner}/${repoInfo.repo}/deployments/${deployment.id}/statuses`]);
   const success = Array.isArray(statuses) ? statuses.find((s) => s && s.state === "success" && s.environment_url) : null;
   if (!success) return fail(`found no successful status with an environment_url for deployment ${deployment.id}`);
