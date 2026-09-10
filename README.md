@@ -225,8 +225,9 @@ pass shows its work, not just a green check.
   `viewports` (`[390, 1440]`), `budgetBytes` (`10485760`), `userFacingPaths`
   (`["src/**","app/**","components/**","pages/**","public/**","styles/**"]`),
   `storageState` (`null`) — a path to a Playwright storage-state JSON file, resolved
-  relative to the repo root (absolute paths pass through) — and `beforeUrl`/`afterUrl`
-  (both `null`, see **Hosted-URL mode** below). Recording only
+  relative to the repo root (absolute paths pass through) — `beforeUrl`/`afterUrl`
+  (both `null`, see **Hosted-URL mode** below), `previewEnvironment` (`"Preview"`, see
+  **Dynamic afterUrl** below), and `extraHTTPHeaders` (`null`, see below). Recording only
   runs when the branch diff (`git diff <merge-base>...HEAD`) touches a `userFacingPaths` glob;
   `--force` bypasses that gate for an on-demand run.
 - **Hosted-URL mode** — for a repo with no local boot story (e.g. Vercel: every PR already
@@ -242,6 +243,24 @@ pass shows its work, not just a green check.
   merge-base SHA) can point at different content after every prod redeploy, so caching by
   URL would silently serve a stale clip; the before side is re-recorded fresh on every
   hosted run instead.
+- **Dynamic afterUrl** — a Vercel (or similar) preview URL is different for every pull
+  request, so it can't live in the committed marker as a constant. Set `afterUrl` to the
+  literal string `"github-deployment"` and the recorder resolves the real URL at run time:
+  `gh api repos/<owner>/<repo>/deployments?environment=<previewEnvironment>` (owner/repo
+  from the `origin` git remote), picks the deployment whose `sha` matches HEAD (or the
+  head sha of `--pr <n>` when given), then `gh api .../deployments/<id>/statuses` and
+  takes `environment_url` from the most recent `state: success` status. `beforeUrl` stays
+  a plain constant (typically the stable production URL) so this pairs with hosted-URL
+  mode above. Any failure — `gh` missing/unauthenticated, no `origin` remote, no matching
+  deployment, no successful status — prints a warning naming why and **skips recording
+  entirely** (exit 0); it never falls back to boot mode and never blocks the pass.
+- **`extraHTTPHeaders`** sends fixed headers on every request the journey makes (e.g. a
+  Vercel deployment-protection bypass token) — an object of header name to value, passed
+  through to `browser.newContext({ extraHTTPHeaders })`. A value may reference
+  `${ENV_VAR}`, expanded from `process.env` so the secret itself is never committed;
+  an unset variable prints a warning naming **the variable** and omits that header rather
+  than failing the pass. Header values are secrets: the recorder never prints them and
+  a `--dry-run --json` dump carries only header names plus a `"REDACTED"` marker.
 - **`storageState`** starts every journey already signed in — the only way to preview an
   app behind SSO (e.g. Google), which the recorder must never drive by filling a login
   form. This file holds a live session: **do not commit it**. Missing or unreadable →

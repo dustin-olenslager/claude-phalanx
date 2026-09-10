@@ -25,6 +25,18 @@
 // relative to the repo root) — the recorder starts the context already signed in. That
 // file holds a live session: never commit it. Missing/unreadable → warns and records
 // signed-out; never fails the pass.
+//
+// For a Vercel-style repo where every PR gets a different preview URL, set
+// "afterUrl": "github-deployment" in .phalanx-preview (plus "beforeUrl": "<stable prod
+// URL>" and optionally "previewEnvironment", default "Preview") — the recorder resolves
+// the real URL via `gh api .../deployments` + `.../statuses` at run time instead of a
+// committed constant. Unresolvable (no gh, no matching deployment, no successful
+// status) → warns why and skips recording; never fails the pass.
+//
+// For a protected deployment that needs an auth header, set "extraHTTPHeaders" in
+// .phalanx-preview, e.g. {"x-vercel-protection-bypass": "${VERCEL_BYPASS_TOKEN}"} — the
+// value expands from process.env, so the secret itself is never committed. An unset
+// variable warns by name and omits that header rather than failing the pass.
 
 export const title = "Example journey — homepage search";
 export const sinceMain = false;
