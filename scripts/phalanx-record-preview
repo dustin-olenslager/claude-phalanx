@@ -18,6 +18,8 @@ const DEFAULT_CONFIG = {
   budgetBytes: 10485760,
   userFacingPaths: ["src/**", "app/**", "components/**", "pages/**", "public/**", "styles/**"],
   storageState: null,
+  beforeUrl: null,
+  afterUrl: null,
 };
 
 function loadHookLib() {
@@ -110,6 +112,24 @@ function resolveStorageState(root, config) {
   return { path: resolved, exists };
 }
 
+// hosted-URL mode (no local boot story, e.g. a Vercel-hosted repo with an unreachable
+// prod DB): beforeUrl + afterUrl point at two already-running deployments instead of
+// booting anything. One without the other can't record a real before/after pair, so
+// it falls back to the normal boot path with an unmissable warning rather than
+// half-applying it.
+function resolveHostedUrls(config) {
+  const { beforeUrl, afterUrl } = config;
+  if (beforeUrl && afterUrl) return { mode: "hosted", beforeUrl, afterUrl, warning: null };
+  if (beforeUrl || afterUrl) {
+    const missing = beforeUrl ? "afterUrl" : "beforeUrl";
+    return {
+      mode: "boot", beforeUrl: null, afterUrl: null,
+      warning: `preview: WARNING hosted-URL mode needs BOTH beforeUrl and afterUrl (missing ${missing}) — falling back to boot mode`,
+    };
+  }
+  return { mode: "boot", beforeUrl: null, afterUrl: null, warning: null };
+}
+
 function resolveJourneyFiles(root, previewsDir, opts) {
   if (opts.journey) {
     const p = path.isAbsolute(opts.journey) ? opts.journey : path.join(root, opts.journey);
@@ -146,7 +166,7 @@ async function loadJourney(file) {
   catch (e) { return { mod: null, error: String((e && e.message) || e) }; }
 }
 
-async function buildDryRunPlan(root, journeyFiles, config, mergeBase) {
+async function buildDryRunPlan(root, journeyFiles, config, mergeBase, hostedUrls) {
   const baselineDir = path.join(root, ".claude-runs", "previews", "baseline");
   const journeys = [];
   for (const file of journeyFiles) {
@@ -157,10 +177,16 @@ async function buildDryRunPlan(root, journeyFiles, config, mergeBase) {
     const viewports = (mod && mod.viewports) || config.viewports;
     const perViewport = viewports.map((vw) => {
       let baselinePath = null, baselineCached = false, willRecordBefore = false;
-      if (!sinceMain && mergeBase) {
-        baselinePath = path.join(baselineDir, `${mergeBase}.${journeyHash}.${vw}.webm`);
-        baselineCached = fs.existsSync(baselinePath);
-        willRecordBefore = !baselineCached;
+      if (!sinceMain) {
+        if (hostedUrls.mode === "hosted") {
+          // Never cached: a hosted beforeUrl can change under a prod redeploy at any
+          // time, so every hosted run re-records the before side fresh (see README).
+          willRecordBefore = true;
+        } else if (mergeBase) {
+          baselinePath = path.join(baselineDir, `${mergeBase}.${journeyHash}.${vw}.webm`);
+          baselineCached = fs.existsSync(baselinePath);
+          willRecordBefore = !baselineCached;
+        }
       }
       return { viewport: vw, baselinePath, baselineCached, willRecordBefore };
     });
@@ -169,7 +195,7 @@ async function buildDryRunPlan(root, journeyFiles, config, mergeBase) {
       journeyHash, mergeBase, loadError: error, perViewport,
     });
   }
-  return { dryRun: true, mergeBase, ffmpeg: findFfmpeg(), ghVersion: ghVersion(), journeys };
+  return { dryRun: true, mergeBase, hostedUrls, ffmpeg: findFfmpeg(), ghVersion: ghVersion(), journeys };
 }
 
 // --- ffmpeg tier detection ---------------------------------------------------
@@ -327,8 +353,9 @@ async function recordClip(browser, previewsRoot, runFn, vw, vh, ctx, budgetMs, s
   }
 }
 
-async function recordAfter(browser, previewsRoot, mod, slug, vw, vh, config, outDir, budgetMs) {
-  const ctx = { baseUrl: config.baseUrl, viewport: vw, side: "after", slug, outDir };
+async function recordAfter(browser, previewsRoot, mod, slug, vw, vh, config, outDir, budgetMs, hostedUrls) {
+  const baseUrl = hostedUrls.mode === "hosted" ? hostedUrls.afterUrl : config.baseUrl;
+  const ctx = { baseUrl, viewport: vw, side: "after", slug, outDir };
   const { error, recordedPath } = await recordClip(browser, previewsRoot, mod.run, vw, vh, ctx, budgetMs, config.storageState);
   if (error) return { path: null, error };
   const destPath = path.join(outDir, `${slug}.${vw}.after.webm`);
@@ -337,7 +364,7 @@ async function recordAfter(browser, previewsRoot, mod, slug, vw, vh, config, out
   return { path: destPath, error: null };
 }
 
-async function recordBefore(browser, root, previewsRoot, mod, slug, journeyHash, mergeBase, vw, vh, config, outDir, budgetMs) {
+async function recordBefore(browser, root, previewsRoot, mod, slug, journeyHash, mergeBase, vw, vh, config, outDir, budgetMs, hostedUrls) {
   if (mod.sinceMain) {
     try {
       fs.writeFileSync(
@@ -346,6 +373,17 @@ async function recordBefore(browser, root, previewsRoot, mod, slug, journeyHash,
       );
     } catch {}
     return { path: null, cached: false, missing: true, missingReason: "sinceMain" };
+  }
+  if (hostedUrls.mode === "hosted") {
+    // No worktree, no boot: the before side is just another URL. Never cached (see
+    // buildDryRunPlan) so a prod redeploy is reflected on the very next run.
+    const ctx = { baseUrl: hostedUrls.beforeUrl, viewport: vw, side: "before", slug, outDir };
+    const { error, recordedPath } = await recordClip(browser, previewsRoot, mod.run, vw, vh, ctx, budgetMs, config.storageState);
+    if (error) return { path: null, cached: false, missing: true, missingReason: `before-run failed: ${error}` };
+    const destPath = path.join(outDir, `${slug}.${vw}.before.webm`);
+    try { fs.renameSync(recordedPath, destPath); }
+    catch (e) { return { path: null, cached: false, missing: true, missingReason: `failed to save clip: ${e.message}` }; }
+    return { path: destPath, cached: false, missing: false };
   }
   if (!mergeBase) return { path: null, cached: false, missing: true, missingReason: "no merge-base" };
 
@@ -487,7 +525,7 @@ async function attachResults(root, opts, attachments) {
   return { mode: "local", ghVersion: ghVer, ok: true, error: null };
 }
 
-async function runAll(root, journeyFiles, config, mergeBase, pw, opts) {
+async function runAll(root, journeyFiles, config, mergeBase, pw, opts, hostedUrls) {
   const previewsRoot = path.join(root, ".claude-runs", "previews");
   fs.mkdirSync(previewsRoot, { recursive: true });
   const ffmpeg = findFfmpeg();
@@ -497,7 +535,7 @@ async function runAll(root, journeyFiles, config, mergeBase, pw, opts) {
   const lines = [];
   const allAttachments = [];
   try {
-    if (config.startCmd) {
+    if (hostedUrls.mode !== "hosted" && config.startCmd) {
       try { teardownApp = await bootApp(config.startCmd, root, config.baseUrl, config.readyTimeoutMs); }
       catch (e) { lines.push(`preview: app failed to become ready: ${e.message}`); }
     }
@@ -529,8 +567,8 @@ async function runAll(root, journeyFiles, config, mergeBase, pw, opts) {
 
       for (const vw of viewports) {
         const vh = vw === 390 ? 844 : 900;
-        const before = await recordBefore(browser, root, previewsRoot, mod, slug, journeyHash, mergeBase, vw, vh, config, outDir, budgetMs);
-        const after = await recordAfter(browser, previewsRoot, mod, slug, vw, vh, config, outDir, budgetMs);
+        const before = await recordBefore(browser, root, previewsRoot, mod, slug, journeyHash, mergeBase, vw, vh, config, outDir, budgetMs, hostedUrls);
+        const after = await recordAfter(browser, previewsRoot, mod, slug, vw, vh, config, outDir, budgetMs, hostedUrls);
         if (after.error) journeyOk = false;
         const { composite, attachments, dropped } = buildAttachmentsForViewport(
           ffmpeg, outDir, slug, title, vw, before, after, config.budgetBytes,
@@ -608,6 +646,9 @@ async function main() {
   }
   config.storageState = storageState && storageState.exists ? storageState.path : null;
 
+  const hostedUrls = resolveHostedUrls(config);
+  if (hostedUrls.warning) console.log(hostedUrls.warning);
+
   const mergeBase = getMergeBase(root);
   const userFacing = computeUserFacing(root, mergeBase, config.userFacingPaths);
   if (userFacing.gated && !opts.force) {
@@ -621,7 +662,7 @@ async function main() {
   if (journeyFiles.length === 0) { console.log("preview: skipped (no journeys)"); return; }
 
   if (opts.dryRun) {
-    const plan = await buildDryRunPlan(root, journeyFiles, config, mergeBase);
+    const plan = await buildDryRunPlan(root, journeyFiles, config, mergeBase, hostedUrls);
     console.log(JSON.stringify({ ...plan, userFacing, storageState }, null, 2));
     return;
   }
@@ -630,7 +671,7 @@ async function main() {
   try { pw = resolvePlaywright(root); }
   catch { console.log("preview: skipped (playwright not installed)"); return; }
 
-  const result = await runAll(root, journeyFiles, config, mergeBase, pw, opts);
+  const result = await runAll(root, journeyFiles, config, mergeBase, pw, opts, hostedUrls);
   result.userFacing = userFacing;
   writeResult(root, result);
   pruneOldBaselines(root);
