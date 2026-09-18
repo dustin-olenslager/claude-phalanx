@@ -35,9 +35,14 @@ printf "%-22s %-8s %-8s %-9s %-9s %-9s %s\n" \
   REPO ROADMAP QUEUE WORKLOG AGENTS MIRROR NOTES
 
 for name in $REPOS; do
-  repo="$ROOT/$name"
+  # Accept a bare repo name (resolved under ROOT) or an absolute/relative path.
+  case "$name" in
+    /*|./*) repo="$name" ;;
+    *)      repo="$ROOT/$name" ;;
+  esac
+  label="$(basename "$repo")"
   [ -d "$repo/.git" ] || { printf "%-22s %-8s %-8s %-9s %-9s %-9s %s\n" \
-      "$name" "-" "-" "-" "-" "-" "NOT A GIT REPO"; fail=1; continue; }
+      "$label" "-" "-" "-" "-" "-" "NOT A GIT REPO"; fail=1; continue; }
 
   # --- plan artifacts ---
   roadmap="ok";  [ -f "$repo/docs/claude/roadmap.md" ] || roadmap="MISSING"
@@ -76,11 +81,11 @@ for name in $REPOS; do
     || status="DRIFT"
 
   if [ "$status" = "ok" ]; then
-    printf "%-22s %-8s %-8s %-9s %-9s %-9s %s\n" "$name" ok ok ok ok ok ""
+    printf "%-22s %-8s %-8s %-9s %-9s %-9s %s\n" "$label" ok ok ok ok ok ""
   else
     fail=1
     printf "%-22s %-8s %-8s %-9s %-9s %-9s %s\n" \
-      "$name" "$roadmap" "$queue" "$worklog" "$agents" "$mirror" "$(echo "$notes" | sed 's/^ //')"
+      "$label" "$roadmap" "$queue" "$worklog" "$agents" "$mirror" "$(echo "$notes" | sed 's/^ //')"
   fi
 done
 
