@@ -22,6 +22,7 @@ Append-only, never pruned. On ship: promote the durable entry to `completed-feat
 
 <!-- new lines below, newest first -->
 
+- 2026-09-19 · drop `flutter` from the drift-check fleet list — `/workspace/flutter` is a pristine upstream flutter/flutter clone (branch `stable`, kit landed untracked by mistake), removed from PANOPLY-OPTIMIZATION.md §2 as not a Joeybuilt project · `scripts/plan-contract-drift.sh` · Harness parity — shared plan contract
 - 2026-09-17 · fix drift-check to accept absolute/relative repo paths (bare-name-only broke the documented `/workspace/foo` usage); label rows by basename · `scripts/plan-contract-drift.sh` · Harness parity — shared plan contract
 - 2026-09-17 · Unify plan-doc contract across harnesses — point opencode (`instructions`) and Claude (`core.md`) at `/workspace/PANOPLY-OPTIMIZATION.md`, add read-only `scripts/plan-contract-drift.sh`, record 14-repo baseline · `shared-plan-contract/` · Harness parity — shared plan contract
 - 2026-09-17 · Port Phalanx config layer to opencode — 9 subagents (implementer/orchestrator/researcher/verifier + 5 personas) and 3 commands (work/work-loop/assess-stack) translated to `/config/.config/opencode/agent/` + `command/`, verified via `opencode debug config` · `opencode-port/` · Harness parity — opencode

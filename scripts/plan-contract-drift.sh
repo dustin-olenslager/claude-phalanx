@@ -19,7 +19,9 @@ set -eu
 
 # The project→repo map is the source of truth in PANOPLY-OPTIMIZATION.md §2. This list mirrors it;
 # a repo moved/added there must be reflected here (and vice-versa — reconcile against the doc).
-DEFAULT_REPOS="claude-code-factory claude-phalanx depona flutter fonto frame-forge fylo \
+# flutter was removed from §2 on 2026-09-19: /workspace/flutter is a pristine upstream
+# flutter/flutter clone (branch `stable`), not a Joeybuilt project — the kit landed there by mistake.
+DEFAULT_REPOS="claude-code-factory claude-phalanx depona fonto frame-forge fylo \
 hive-edge-fallback levio nexalog ordica platform plexo pushd"
 
 if [ "$#" -gt 0 ]; then
