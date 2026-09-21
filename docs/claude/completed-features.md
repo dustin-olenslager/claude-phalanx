@@ -33,6 +33,27 @@ _Delete the example entry once the first real feature ships._
 
 <!-- New entries go directly below this line, newest first. -->
 
+### Drift audit checks tracked-ness, not just existence — 2026-09-21
+- **What shipped:** `scripts/plan-contract-drift.sh` now fails a repo whose plan docs or agent kit
+  exist on disk but were never committed, and names the file class that is missing — a hard `KIT`
+  column (≥1 tracked `.claude/rules/` module **and** tracked `scripts/sync-agents.sh`),
+  `UNTRACKED` / `MISSING` states for `AGENTS` and `MIRROR`, plus non-fatal `soft:` notes for the gaps
+  that have legitimate exceptions. Locked in by `scripts/test-plan-contract-drift.sh` (7 cases, runs
+  inside `scripts/verify.sh`).
+- **Area:** `shared-plan-contract`
+- **Archived plan:** none — one PR, the follow-up to "This repo's own Panoply kit is versioned in git"
+  below, which is the gap that motivated it.
+- **Notable decisions:** three findings are deliberately **soft** — reported, never failing:
+  `queue-untracked` (PANOPLY §1a calls `in-progress.md` a *generated view* that is never committed;
+  frame-forge honours that literally, 12 repos commit it anyway), `settings-untracked`, and
+  `gates-not-wired` / `no-ci-workflow` (levio + plexo wire the gates into `ci.yml` rather than a
+  `verify.yml`, and fylo has a *recorded operator decision* not to wire them at all). A hard rule
+  that a documented exception already violates is a rule the whole fleet learns to ignore.
+- **Known gaps:** the audit reads each repo's **current checkout** (index + HEAD), so a repo parked on
+  a feature branch is audited as that branch, not as its default. Fleet state at landing: 13/13
+  conform; soft notes on claude-phalanx / fonto / frame-forge / fylo (gates not wired) and pushd
+  (`settings.json` untracked). Still advisory — nothing gates a merge on it.
+
 ### This repo's own Panoply kit is versioned in git — 2026-09-21
 - **What shipped:** the **43 kit files** claude-phalanx had been running on *untracked* are now
   committed, so a fresh clone gets the governance every sibling repo already has: `AGENTS.md`,
