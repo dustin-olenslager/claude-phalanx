@@ -54,9 +54,11 @@ In a monorepo the closest `AGENTS.md` to the file you are editing wins; this roo
   updates `docs/claude/in-progress.md` (its status + Next step), appends one line to the running
   worklog, and moves the `roadmap.md` initiative when it starts or ships — all in the same commit as
   the code. Shipped-but-unlogged counts as not done. **The landing gate `scripts/check-docs.sh` fails
-  any commit that changes code but not the worklog in the same commit** — it runs in required CI, so
-  no agent in any tool can land a code change without its doc update. Full doctrine:
-  `.claude/rules/documentation.md`.
+  any commit that changes code but not the worklog in the same commit** — it runs on every PR in
+  `.github/workflows/ci.yml` (job `contract`, beside `sync-agents.sh --check`), so a code change with
+  no doc update goes red in front of every reviewer, whatever tool wrote it. It is **not required**:
+  this repo has no branch protection, so a red gate does not block a merge — see "Enforcement — the
+  honest version" below. Full doctrine: `.claude/rules/documentation.md`.
 
 ## Architecture is non-negotiable
 
@@ -145,10 +147,20 @@ model at all:
 - **The only cross-tool enforcement is server-side:** branch protection on the default branch (blocks
   force-push and direct pushes no matter who typed them) and **required CI status checks** (test,
   typecheck, lint, secret scan) that block a merge regardless of tool.
-  This repo ships a starter CI workflow at `scripts/templates/ci-verify.yml` and a pre-commit sample
-  at `scripts/templates/pre-commit`; **turn them on and mark the CI checks required** — until you do,
-  the only backstop against a non-Claude agent is the prose above. Do not assume a gate you have not
-  wired.
+- **What is actually wired here:** `.github/workflows/ci.yml` runs the install self-test, the static
+  gates (`node --check`, `bash -n`, shellcheck at `-S warning`), and the `contract` job
+  (`sync-agents.sh --check` + `check-docs.sh`), with `secret-scan.yml` alongside — on every PR and
+  every push to `main`. **None of it is required.** This repo is public with no branch protection and
+  no rulesets, so every check is report-only: a red run is visible and blocks nothing.
+- Unlike the private `joeybuilt-official` repos — where the protection and rulesets APIs return 403 on
+  the GitHub free plan — protection **is** available here, so marking `selftest`, `static` and
+  `contract` required is an operator decision that can actually be executed. Do not use
+  `scripts/init-repo-protection.sh` as written to do it: it also sets linear-history and 1 review,
+  which conflicts with this house's merge-commit style.
+- This repo also ships the starter workflow at `scripts/templates/ci-verify.yml` and a pre-commit
+  sample at `scripts/templates/pre-commit` for the projects it adapts; **turn them on and mark the CI
+  checks required** in those repos too — until you do, the only backstop against a non-Claude agent is
+  the prose above. Do not assume a gate you have not wired.
 
 ## The rules, in full — inlined for AGENTS.md-native tools
 
