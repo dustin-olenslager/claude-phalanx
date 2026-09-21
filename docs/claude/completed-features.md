@@ -33,6 +33,31 @@ _Delete the example entry once the first real feature ships._
 
 <!-- New entries go directly below this line, newest first. -->
 
+### This repo's own Panoply kit is versioned in git — 2026-09-21
+- **What shipped:** the **43 kit files** claude-phalanx had been running on *untracked* are now
+  committed, so a fresh clone gets the governance every sibling repo already has: `AGENTS.md`,
+  `CLAUDE.md`, `GEMINI.md`, `CONVENTIONS.md`; `.claude/rules/` ×9, `.claude/agents/` ×6,
+  `.claude/commands/` ×3, `.claude/settings.json` (the Claude permission gate) +
+  `settings.local.json.example`; the generated mirrors (`.cursor/rules/` ×10, `.clinerules/`,
+  `.windsurf/`, `.github/copilot-instructions.md`); and the vendored kit scripts
+  (`sync-agents.sh`, `check-docs.sh`, `check-expert-review.sh`, `init-repo-protection.sh`,
+  `templates/ci-verify.yml`, `templates/pre-commit`).
+- **Area:** `shared-plan-contract`
+- **Archived plan:** none — surfaced by the 2026-09-20 fleet repair arc and landed as one PR.
+- **Notable decisions:** `check-expert-review.sh` was fixed on the way in, because committing it
+  unmodified would have reddened the `static` job: it assigned a `reason` variable it never read
+  (SC2034, warning severity — exactly what `ci.yml` gates on; the helper already prints each missing
+  item, so nothing is lost), and its closing `[ "$fail" -eq 0 ] && echo OK` left the real exit code
+  to `set -e` with `exit "$fail"` unreachable. Both are explicit now. **This makes phalanx's copy
+  differ from the upstream panoply kit** — backport the same two fixes there or the next `adapt`
+  reintroduces them.
+- **Known gaps:** tracked ≠ enforced. `ci.yml` still runs only selftest + static + secret-scan; it
+  does **not** run `sync-agents.sh --check` or `check-docs.sh`, even though the `AGENTS.md` now
+  committed here says the landing gate "runs in required CI". Wiring both into `ci.yml` is the next
+  PR. Separately, `scripts/plan-contract-drift.sh` checks kit **existence**, not tracked-ness —
+  which is precisely why this repo reported conforming (13/13) while its entire kit was uncommitted;
+  hardening that check is what stops the same silent gap elsewhere.
+
 ### One shared plan-doc contract across harnesses — 2026-09-17
 - **What shipped:** both OpenCode and Claude Code now load `/workspace/PANOPLY-OPTIMIZATION.md` as
   the single canonical plan-home contract, and `scripts/plan-contract-drift.sh` audits every repo in

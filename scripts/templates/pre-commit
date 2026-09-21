@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+# Starter local pre-commit gate. Copy to .git/hooks/pre-commit (chmod +x), or wire it via husky /
+# lefthook / pre-commit. (This repo already ships a leak-guard at githooks/pre-commit — this is the
+# kit's broader gate; see scripts/templates/ci-verify.yml for the binding server-side plane.)
+set -eu
+
+echo "pre-commit: typecheck…"; find hooks -name '*.js' -print0 | xargs -0 -n1 node --check && find scripts -name '*.mjs' -print0 | xargs -0 -n1 node --check && find scripts hooks -name '*.sh' -print0 | xargs -0 -n1 bash -n
+echo "pre-commit: lint…";      find scripts hooks -name '*.sh' -print0 | xargs -0 shellcheck -S warning && shellcheck -S warning install.sh uninstall.sh
+echo "pre-commit: test…";      bash scripts/verify.sh
+
+# Keep the tool-native agent mirrors in sync with AGENTS.md (fails if a mirror drifted).
+if [ -f scripts/sync-agents.sh ]; then
+  echo "pre-commit: agent mirrors…"; sh scripts/sync-agents.sh --check
+fi
+
+# Docs landing gate — no code change lands without its worklog line in the same commit.
+if [ -f scripts/check-docs.sh ]; then
+  echo "pre-commit: docs gate…"; sh scripts/check-docs.sh
+fi
+
+# Expert-review gate (local: checks staged change for trivial escape or review evidence).
+if [ -f scripts/check-expert-review.sh ]; then
+  echo "pre-commit: expert review…"; sh scripts/check-expert-review.sh
+fi
+
+echo "pre-commit: OK"
