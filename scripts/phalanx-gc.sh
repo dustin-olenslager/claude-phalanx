@@ -91,10 +91,24 @@ wt_remove() { # $1=worktree path (as registered)  -> 0 on success
   [ -e "$wt" ] && return 1 || return 0
 }
 
+# Loop-state leftovers in a directory that is not a git repo. Glob + case, not `ls | grep`
+# (SC2010): parsing ls misreads names with newlines, leading dashes, or trailing spaces.
+stray_loop_state() {
+  local d="$1" p base out=""
+  for p in "$d"/* "$d"/.[!.]* "$d"/..?*; do
+    [ -e "$p" ] || continue
+    base="${p##*/}"
+    case "$base" in
+      *TASKS.md*|*PROGRESS.md*|*claude-runs*|*phalanx*) out="$out $base" ;;
+    esac
+  done
+  printf '%s' "${out# }"
+}
+
 gc_repo() {
   local R="$1"
   [ -d "$R" ] || { echo "## $R"; warn "registry path does not exist -- remove it from $REG"; return; }
-  git -C "$R" rev-parse --git-dir >/dev/null 2>&1 || { echo "## $R"; warn "not a git repo (stray loop state?): $(ls -a "$R" | grep -E 'TASKS.md|PROGRESS.md|\.claude-runs|\.phalanx' | tr '\n' ' ')"; return; }
+  git -C "$R" rev-parse --git-dir >/dev/null 2>&1 || { echo "## $R"; warn "not a git repo (stray loop state?): $(stray_loop_state "$R")"; return; }
   local common; common="$(git -C "$R" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
   local top; top="$(dirname "$common")"
   local M; M="$(main_of "$top")"
