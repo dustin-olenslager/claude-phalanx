@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy to .claude/settings.local.json (git-ignored — add it to .gitignore) to loosen permissions for yourself only; delete this _comment line after copying.",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(npm run dev:*)",
+      "Bash(npm run build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  },
+  "env": {
+    "EXAMPLE_LOCAL_FLAG": "1"
+  }
+}

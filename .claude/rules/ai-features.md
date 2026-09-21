@@ -1,0 +1,46 @@
+
+# AI Features & Data Enrichment
+
+> **Applies when:** the project calls a language model, or fills in record fields from third-party data sources.
+> **Delete this file (and its `@` import in CLAUDE.md) if:** the project does neither.
+
+## Design for the next model, not this one
+
+- **Model providers and enrichment vendors are Frameworks & Drivers, and they sit behind ports.** The use case declares the capability it needs (`classify`, `summarize`, `resolveOrganization`); the provider SDK implements it as an adapter. See `clean-architecture.md`. That is the whole reason a provider swap or a model upgrade is a one-adapter change instead of a grep across every feature.
+- **Nothing inward of that adapter may name a provider, a model identifier, or a vendor's response shape.** A use case that branches on which model answered has hardcoded a Detail into a business rule, and the next upgrade has to touch it.
+- **Build so that swapping in a newer model produces a visible quality improvement with zero code changes.** Model identifiers, prompts, and tuning parameters are configuration; if upgrading means editing call sites, the upgrade will be deferred and the product will quietly stay a generation behind.
+- Route every model call through one internal client. Prompt selection, model selection, retries, timeouts, token accounting, and logging live there — not scattered across features.
+- **Keep prompts as configuration, not hardcoded strings.** Store them as versioned templates (files or table rows) with named variables. This is what lets you iterate a prompt without a deploy and diff which version produced which output — and it is the same principle as the port: a prompt hardcoded at a call site is a Detail that has escaped into a business rule.
+
+## Persist provenance on every output
+
+- Write model outputs to a **single unified outputs/decisions table**, one row per call, rather than one column bolted onto each feature's table. One table means one query answers "what did the model decide, when, with what, and did anyone override it" across every feature.
+- Every row records at minimum: the feature/kind, the input reference (which record it was about), the model version, the prompt version, the output, a timestamp, and the outcome (accepted, rejected, superseded).
+- **Store the model version and prompt version on every single output.** Without them you cannot compare a new model against the old one, cannot attribute a regression, and cannot safely reprocess.
+- **Track input and output tokens as separate columns.** They bill at different rates per model, so a single combined count cannot be turned into a cost figure after the fact — and cost per feature is the number that decides whether a feature stays on.
+- Record failures and refusals as rows too. A table that only holds successes cannot tell you a prompt's failure rate.
+
+## Reprocessing and freshness
+
+- **Support batch reprocessing from the start**: a job that re-runs a chosen feature over a chosen set of records with the current model and prompt. When a better model ships, one operator action should level up the whole corpus overnight.
+- Reprocessing writes new rows; it never overwrites old ones. Keeping the prior output is how you prove the new model is actually better before switching over.
+- **Use lazy, on-demand evaluation for high-value surfaces** — the ones a user is actively reading, where quality matters more than a few hundred milliseconds. Computing at read time means those surfaces always hit the current model with no deploy and no backfill.
+- Use precomputation for bulk, low-value, or latency-critical paths, and cache keyed on model version + prompt version + input hash — so a version bump invalidates the cache automatically instead of serving stale answers forever.
+- Never block a user-facing write on a model call. Enqueue it and let the UI show a pending state.
+
+## Enrichment from third-party sources
+
+- **Persist enriched data in your own tables. Never re-fetch on render.** Fetch once — at record creation or in a background job — store the result, and serve from your own data thereafter. Per-render fetching costs a vendor call per page view, adds vendor latency to every load, and makes the page break when the vendor is down.
+- **Enrich automatically in the background, not as a manual step.** When a record arrives with an identifier a vendor can resolve (a domain, an email, a company name), the enrichment job should start on its own. Anything requiring a user to click "enrich" ends up applied to a fraction of records, and the coverage gap poisons every report built on those fields.
+- **Surface enriched data everywhere the record appears** — inline chips, list rows, search results, avatars, timeline items — not only on the record's detail page. Enrichment you paid for and only show in one place is mostly wasted.
+- **Track which fields the user edited by hand** (a per-record list of user-modified field names, or per-field provenance) and make every enrichment write skip them. A background job that overwrites a correction the user made by hand destroys trust in the whole feature, and the user has no way to tell it happened.
+- Record the source and fetch timestamp for each enriched field so stale or disputed data can be traced and re-fetched selectively.
+- Treat vendors as categories, not dependencies: a structured-data provider (e.g. a people/company data API), an asset provider (e.g. a logo service), a model for classification and summarization. Put each behind a port so a vendor swap is one adapter, and never let a vendor's response shape leak into your schema or your API.
+
+## Guardrails
+
+- Validate and constrain model output before it is stored or displayed — parse to a schema, reject what does not conform, and log the rejection. Never render raw model output into a trusted context.
+- Set explicit timeouts and cost/rate ceilings on every model and vendor call, and degrade to the un-enriched view on failure rather than erroring the page.
+- Never send more of a record to a third party than the feature needs, and keep the redaction rules in the shared client, not per feature.
+
+
