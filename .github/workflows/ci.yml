@@ -1,9 +1,14 @@
 name: ci
 # Exercises the project's OWN embedded self-test (the ~40 assertions inside
-# install.sh) plus static checks. install.sh is run against a throwaway
+# install.sh), static checks, and the two plan-contract gates this repo ships to
+# every other project (`sync-agents.sh --check` + `check-docs.sh` — job
+# `contract`). install.sh is run against a throwaway
 # CLAUDE_DIR; PHALANX_NO_CRON=1 + PHALANX_NO_GUARDS=1 keep CI from mutating the
 # runner's crontab or global git config (install-guards.sh sets
 # `git config --global core.hooksPath`).
+#
+# Report-only: this repo has no branch protection, so a red job does not block a
+# merge. See AGENTS.md -> "Enforcement — the honest version".
 on:
   push:
     branches: [main]
@@ -65,3 +70,24 @@ jobs:
           brew install shellcheck
           find scripts hooks -name '*.sh' -print0 | xargs -0 shellcheck -S warning
           shellcheck -S warning install.sh uninstall.sh
+
+  # The two plan-contract gates every sibling repo runs from scripts/templates/ci-verify.yml.
+  # Wiring them here is what makes AGENTS.md's claim true for the repo that SHIPS the kit: a
+  # commit that changes code without its worklog line, or a stale tool mirror, now fails CI on
+  # the PR instead of depending on whoever happens to remember to run the script by hand.
+  #
+  # `check-expert-review.sh` is deliberately NOT wired. It wants a checklist.md with pending
+  # items under docs/claude/, a new ADR under docs/adr/, and >=2 persona sign-offs in the PR
+  # body for every non-trivial commit — a far heavier gate than this repo has ever run, and
+  # turning it on is an operator decision, not a drive-by in a CI PR.
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history, so the docs gate can diff against the PR base
+      - name: Agent mirrors in sync
+        run: sh scripts/sync-agents.sh --check
+      - name: Docs in sync
+        run: sh scripts/check-docs.sh --since "${{ github.event.pull_request.base.sha }}"
+        if: github.event_name == 'pull_request'

@@ -52,7 +52,9 @@ _Delete the example entry once the first real feature ships._
 - **Known gaps:** the audit reads each repo's **current checkout** (index + HEAD), so a repo parked on
   a feature branch is audited as that branch, not as its default. Fleet state at landing: 13/13
   conform; soft notes on claude-phalanx / fonto / frame-forge / fylo (gates not wired) and pushd
-  (`settings.json` untracked). Still advisory — nothing gates a merge on it.
+  (`settings.json` untracked). claude-phalanx's own note cleared later the same day when its `contract`
+  CI job landed; fonto / frame-forge / fylo and pushd still carry theirs. Still advisory — nothing
+  gates a merge on it.
 
 ### This repo's own Panoply kit is versioned in git — 2026-09-21
 - **What shipped:** the **43 kit files** claude-phalanx had been running on *untracked* are now
@@ -72,12 +74,14 @@ _Delete the example entry once the first real feature ships._
   to `set -e` with `exit "$fail"` unreachable. Both are explicit now. **This makes phalanx's copy
   differ from the upstream panoply kit** — backport the same two fixes there or the next `adapt`
   reintroduces them.
-- **Known gaps:** tracked ≠ enforced. `ci.yml` still runs only selftest + static + secret-scan; it
-  does **not** run `sync-agents.sh --check` or `check-docs.sh`, even though the `AGENTS.md` now
-  committed here says the landing gate "runs in required CI". Wiring both into `ci.yml` is the next
-  PR. Separately, `scripts/plan-contract-drift.sh` checks kit **existence**, not tracked-ness —
-  which is precisely why this repo reported conforming (13/13) while its entire kit was uncommitted;
-  hardening that check is what stops the same silent gap elsewhere.
+- **Known gaps:** *both follow-ups shipped later the same day (2026-09-21)* — `ci.yml` now runs a
+  `contract` job (`sync-agents.sh --check` on every PR/push, `check-docs.sh --since <PR base>` on
+  PRs), and `plan-contract-drift.sh` now audits tracked-ness with its own test suite, so this class of
+  gap cannot recur silently. Still open: nothing in `ci.yml` is **required** — the repo is public with
+  no branch protection and no rulesets, so all three jobs are report-only (an operator decision;
+  protection *is* available on the free plan for a public repo, unlike the private
+  joeybuilt-official repos). `check-expert-review.sh` is still wired nowhere in this repo, and the fix
+  to it described above still needs backporting to the upstream panoply kit.
 
 ### One shared plan-doc contract across harnesses — 2026-09-17
 - **What shipped:** both OpenCode and Claude Code now load `/workspace/PANOPLY-OPTIMIZATION.md` as
