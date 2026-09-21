@@ -22,7 +22,7 @@ from the linked `in-progress.md` rows — so there is almost nothing here to go 
 
 | Initiative | Intent (one line) | Queue rows (`in-progress.md`) | Plan docs |
 |---|---|---|---|
-| | | | |
+| Harness parity — kit currency | Keep the kit vendored into each adapted repo reconciled with panoply upstream, so a stale gate is a decision rather than an accident | row 1 | none yet — scope decision first |
 
 ## Next — committed, not yet started
 

@@ -71,17 +71,27 @@ _Delete the example entry once the first real feature ships._
   unmodified would have reddened the `static` job: it assigned a `reason` variable it never read
   (SC2034, warning severity — exactly what `ci.yml` gates on; the helper already prints each missing
   item, so nothing is lost), and its closing `[ "$fail" -eq 0 ] && echo OK` left the real exit code
-  to `set -e` with `exit "$fail"` unreachable. Both are explicit now. **This makes phalanx's copy
-  differ from the upstream panoply kit** — backport the same two fixes there or the next `adapt`
-  reintroduces them.
+  to `set -e` with `exit "$fail"` unreachable. Both are explicit now.
+  **Correction, same day, verified against `/workspace/panoply` @ `c1216b7`:** the claim first recorded
+  here — that upstream needed these two fixes backported or the next `adapt` would reintroduce them —
+  was **backwards**. Upstream's `check-expert-review.sh` is *newer* than the copy this repo had been
+  running: it already prints `$reason` in its failure message (no dead variable, no SC2034), carries a
+  documented `SC2126` disable for the `grep | wc -l` count, makes persona sign-offs **opt-in** via
+  `EXPERT_REVIEW_REQUIRE_SIGNOFFS=1` instead of arming whenever `gh` happens to be authenticated, and
+  accepts any checklist item under `docs/claude/**` rather than demanding a separate `checklist.md`
+  with an *unchecked* item. So the divergence runs the other way — this repo's vendored copy was
+  stale, and the next `adapt` **fixes** it rather than regressing it. Reconciling the vendored kit is
+  queued in `in-progress.md` row 1.
 - **Known gaps:** *both follow-ups shipped later the same day (2026-09-21)* — `ci.yml` now runs a
   `contract` job (`sync-agents.sh --check` on every PR/push, `check-docs.sh --since <PR base>` on
   PRs), and `plan-contract-drift.sh` now audits tracked-ness with its own test suite, so this class of
   gap cannot recur silently. Still open: nothing in `ci.yml` is **required** — the repo is public with
   no branch protection and no rulesets, so all three jobs are report-only (an operator decision;
   protection *is* available on the free plan for a public repo, unlike the private
-  joeybuilt-official repos). `check-expert-review.sh` is still wired nowhere in this repo, and the fix
-  to it described above still needs backporting to the upstream panoply kit.
+  joeybuilt-official repos). `check-expert-review.sh` is still wired nowhere in this repo — and per the
+  correction above, the vendored copy is **behind upstream**, as are `sync-agents.sh`,
+  `templates/ci-verify.yml` and `templates/pre-commit`; `scripts/check-plan-home.sh` is missing here
+  entirely. Queued as `in-progress.md` row 1.
 
 ### One shared plan-doc contract across harnesses — 2026-09-17
 - **What shipped:** both OpenCode and Claude Code now load `/workspace/PANOPLY-OPTIMIZATION.md` as
