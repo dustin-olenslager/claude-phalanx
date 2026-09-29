@@ -154,6 +154,14 @@ Run against any diff. Each item is pointable: a reviewer can highlight a line an
 > **Applies when:** always — this is the baseline collaboration protocol for every project.
 > **Delete this file (and its `@` import in CLAUDE.md) if:** never. If you disagree with a rule, edit it; do not delete the module.
 
+## Pre-flight — before any proposal
+
+You cannot propose a change to a repo whose state you have not read. Before planning anything:
+
+- `git fetch --prune`, then survey branches, worktrees, and open PRs (`git branch -a`, `git worktree list`, `gh pr list --state open`).
+- Read the central plan doc (`docs/claude/roadmap.md` in kit repos; the repo's one plan doc where the adapt has set a lighter one), the running worklog, and only then the code you are about to change.
+- **Carry forward in-flight work** — continue the queued task or the open PR; never open a parallel track for work already in progress. (Full mechanics: `git-workflow.md` → Pre-flight.)
+
 ## Change Approval
 
 - **Describe your proposed changes and get approval before editing code.** State what you plan to change, which files, and why — then stop and wait for confirmation. Editing first and explaining after removes the user's only cheap moment to redirect you.
@@ -180,6 +188,7 @@ This carve-out is itself a setting: a project that chose the **strict** protocol
 ## Planning Workflow
 
 - **Enter plan mode before any non-trivial or multi-step work.** Any feature, milestone, or task spanning more than a couple of files starts with a plan — use the planning tool, not an informal chat summary, so the plan is an artifact rather than a paragraph that scrolls away.
+- **Write the plan into the plan doc and present it before code.** The plan states the goal in one sentence, the phases, and the exit criteria, and it is presented to the owner for an explicit yes/no — in plain language, written for a non-technical reader. A plan that lives only in the chat summary was never approved.
 - **ALWAYS persist the plan to a file under `docs/claude/`.** A plan that exists only in chat context dies at the next compaction, and you will silently resume with a different plan than the one that was approved. The file is the source of truth; the chat is not.
   - Copy `docs/claude/_templates/plan.md` as the starting point.
   - Write it into the relevant area folder, not flat in `docs/claude/` — e.g. `docs/claude/<area>/<feature>/plan.md`. See `docs/claude/_templates/feature-area/README.md` for the folder convention.
@@ -207,6 +216,7 @@ you propose it.
 - **Process:** Author drafts plan → opens PR → requests review from relevant personas → each persona comments with sign-off → CI gate passes → merge.
 - **Conflict escalation:** If personas disagree on a fundamental trade-off, the ADR records both positions and the decision; the operator (human) breaks ties.
 - **No rubber stamps:** A sign-off without reading the diff is a process violation. The adversary-review skill (§16) provides the grading rubric.
+- **An agent's self-report is not review evidence.** "Tests pass," "done," and "it works" from the agent that wrote the change verify nothing — authorship and evidence must be independent. Non-trivial work is re-reviewed independently (by a second reviewer or a review agent reading only the diff), and the merge gate below exists because that requirement is easy to claim and easy to skip.
 
 ---
 
@@ -280,6 +290,20 @@ It is not a licence to gold-plate. It does not authorize building for imagined r
 > **Applies when:** the project is version-controlled with git and changes land through pull requests.
 > **Delete this file (and its `@` import in CLAUDE.md) if:** the project is not in git, or has no PR/review process at all.
 
+## Pre-flight — before any work or planning (always first)
+
+No agent plans or writes code before knowing the repo's current state. In order:
+
+- **`git fetch --prune` first.** Stale refs lie about what exists: a branch deleted on the remote still looks live locally, and someone else's new branch is invisible until fetched.
+- **Then survey the repo:** `git status --porcelain` (whose work is in the tree?), `git branch -a` and `git worktree list` (what branches and worktrees exist), and `gh pr list --state open` (what is already in flight).
+- **Then read, in order: the central plan doc (`docs/claude/roadmap.md` in this repo; a lighter single plan doc in adapted projects), the running worklog, then the code you are about to change.** Planning from memory of a repo you know is planning from a repo that has since moved.
+- **Carry forward in-flight work.** If the task is already queued in the plan doc, or an open branch/PR already covers it, continue that work — never open a parallel track for something already in progress. One open PR per repo at a time (see Merging), so new work waits behind what is open.
+
+## Plan first — presented before code
+
+- **Every non-trivial change starts with a plan written into the plan doc and presented to the owner BEFORE any code exists.** Goal in one sentence, phases, exit criteria, files it touches, what it deliberately does not cover. Full planning doctrine: `workflow.md`.
+- **The plan is written for a non-technical owner in plain language** — they must be able to say yes or no from what they read. Technical choices inside the plan are settled by evidence in the plan; only genuinely owner-level decisions are routed back to them, as two options plus a recommendation (`quality-bar.md`), never as a prose block.
+
 ## Commits
 
 - Use conventional commit prefixes: `feat:`, `fix:`, `refactor:`, `test:`, `chore:`, `docs:`. They make the history greppable and let release tooling derive changelogs without human curation.
@@ -297,7 +321,8 @@ It is not a licence to gold-plate. It does not authorize building for imagined r
 
 ## Branching
 
-- **Always branch from an up-to-date `main`.** Fetch first: `git fetch origin && git switch -c <branch> origin/main`. Branching from a stale local copy imports every conflict that landed since you last pulled.
+- **One branch per batch, always cut fresh from an up-to-date `main`.** Name the branch for the batch (`fix/<slug>`, `feat/<slug>`, `chore/<slug>`), and a branch lives only while its work is live — not as a storage area for finished work. Fetch first: `git fetch origin && git switch -c <branch> origin/main`. Branching from a stale local copy imports every conflict that landed since you last pulled.
+- **Parallel writers get one worktree (or fresh clone) EACH — never two agents writing in one checkout.** Two mutating agents in one tree corrupt each other's index and stashes no matter how careful each one is; a private checkout is the only isolation git actually provides.
 - **Do not branch from another feature branch or an open PR's branch (no stacked PRs) — the default with exactly one exception, below.** PRs are squash-merged, which rewrites the base PR's commits into a single new SHA. The stacked branch still carries the *original* commits, so after the base merges, your branch will conflict with its own already-merged changes — a conflict that looks impossible and wastes an afternoon.
 - If new work depends on an unmerged PR, the rule is: wait for it to merge, then branch fresh from `main`. The one exception: you are truly blocked and waiting is not an option — then stack, flag it prominently in the PR description so the reviewer knows the base is moving, and expect to run the recovery below after the base squash-merges.
 
@@ -320,6 +345,20 @@ A branch showing commits "ahead" of `main` is *not* proof it holds unmerged work
 - **Only a branch with `+` lines is work.** Everything else is cleanup, not a merge.
 - **Delete a verified-merged branch, but record its tip SHA first so the delete is reversible.** `git rev-parse <branch>` and note the branch name + SHA in the PR or `HISTORY.md`/`CHANGELOG` before deleting — deleting a merged branch loses nothing but the ref, and the ref is the only way back if the check was wrong (`git branch <name> <sha>` restores it). Then delete both ends and prune: `git push origin --delete <branch>`, then `git fetch --prune` so every checkout drops its dead remote-tracking ref.
 - **`git branch -d` is a weaker check than `git cherry`, not a stronger one.** For a squash-merged branch `-d` *refuses* ("not fully merged") because git never sees the collapsed SHA as an ancestor. When `git cherry` has already proved the branch is fully merged but `-d` still refuses, re-read the cherry output once, then delete with `git branch -D` — the cherry check is the authority here, not `-d`.
+
+## Merging
+
+- **Squash-merge to `main` only — and the branch is deleted in the same operation (delete-branch-on-merge).** One compact commit per PR on main; the full commits, diff, review, and check run remain on the PR page. Never a merge commit, never a rebase-merge: per-commit history on the default branch is noise at review time, and rebase-merging recreates the stacked-branch conflict described above. Squash-only is repo-level policy, set centrally on the repository; do not flip it per PR, and never work around it with a merge commit.
+- **One open PR per repo at a time; no stacked PRs.** Parallel reviewable units land serially, so each merges against a stable base and reviewable size. The only exception is when the owner explicitly grants it — and the grant is recorded in the plan doc, so a later session does not read the exception as the rule.
+- **Push each batch as the batch completes.** A PR that arrives once, complete, is one unreviewable dump; incremental pushes show the plan progress as it lands, and review can start on the first batch.
+
+### The STANDARD gate — before any merge, unfiltered
+
+Merging is gated, and the gate is the same in every repo, for every agent, in every tool:
+
+- **Full tests + full typecheck + lint + the architecture-boundary check (where one exists), run unfiltered, in the same session that merges.** Never a filtered run, never a cached "green from earlier" — rerun in the session that merges.
+- **Non-trivial changes get an independent re-review before merge** — by a second reviewer, or by a review agent reading the diff without the author's framing. **An agent's self-report is a claim, not evidence:** "done" and "tests pass" are verified from the artifact or the gate output, never accepted on the author's word.
+- **CI green on the PR is required.** The PR must carry a green required status check; a local pass does not substitute for it.
 
 ## Keeping branches fresh
 
