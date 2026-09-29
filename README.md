@@ -206,8 +206,8 @@ The **merge-into-main gate is non-bypassable** (ignores `PHALANX_WARN`):
 Rollback: merges use `--no-ff` (one commit per task → `git revert -m 1 <sha>`); a failed
 `.phalanx-deploy` becomes a `BLOCKED:` line, never an auto-revert.
 
-**Mobile / Codemagic:** a repo's `.phalanx-deploy` can end by pushing a `v*` git tag,
-which triggers the Codemagic APK build/email — no engine change, the loop already has
+**Mobile / pushd:** a repo's `.phalanx-deploy` can end by pushing a `v*` git tag,
+which triggers the pushd APK build/email — no engine change, the loop already has
 tag-push creds. Keep the tag pattern in the per-repo deploy script.
 
 **Push creds:** a scoped `GH_TOKEN` in `~/.claude/.loop-git-env` (mode 0600, injected

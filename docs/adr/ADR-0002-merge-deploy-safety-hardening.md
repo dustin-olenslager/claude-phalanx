@@ -3,6 +3,7 @@
 - **Status:** Accepted (2026-06-27)
 - **Deciders:** Operator, Phalanx maintainer
 - **Amends:** [ADR-0001](ADR-0001-autonomous-merge-deploy-on-green.md)
+- **Builder update (2026-09-29):** the mobile build service this ADR names is now **pushd** (self-hosted) — Codemagic is retired. The convention in item 4 and Verification is unchanged: `.phalanx-deploy` pushes a `v*` tag → signed-APK build + email; `release-v*` → Play.
 
 ## Context
 
@@ -19,7 +20,7 @@ Three independent, default-OFF per-repo opt-ins, plus two gate fixes:
 1. **`.phalanx-autorun` (new).** The watch cron auto-launches a repo **only** if it carries this marker. Registry membership ≠ unattended auto-run. This decouples "drive me unattended" from "may merge" — enabling merge never again auto-drives a backlog. The three markers are now orthogonal: `.phalanx-autorun` (watcher may drive), `.phalanx-automerge` (may merge on green), `.phalanx-deploy` (may deploy after merge).
 2. **Rule 5d — migration block.** `loop-integrity-gate.js` denies a merge into `main` when the merged branch's diff touches a migration path (`drizzle/ migrations/ prisma/migrations/ alembic/ …`). Non-bypassable. The operator applies the migration to prod, signs off, and merges by hand. prod-DB stays operator-gated, mechanically.
 3. **`GIT_MERGE` tightened** to the `git merge` *subcommand* (`\bgit\s+merge\b`), so branch names and commit messages containing "merge" no longer trip 5c/5d.
-4. **Codemagic convention (doc).** A mobile repo's `.phalanx-deploy` may end by pushing a `v*` git tag, which triggers the Codemagic APK build/email. No engine change — the loop already has tag-push creds; the tag pattern lives in the per-repo deploy script.
+4. **pushd convention (doc).** A mobile repo's `.phalanx-deploy` may end by pushing a `v*` git tag, which triggers the pushd APK build/email. No engine change — the loop already has tag-push creds; the tag pattern lives in the per-repo deploy script.
 
 ## Consequences
 
@@ -30,4 +31,4 @@ Three independent, default-OFF per-repo opt-ins, plus two gate fixes:
 ## Verification
 
 - `install.sh` self-test 60 green, incl. `merge:deny-migration`, `merge:branchname-no-falsetrip` (the GIT_MERGE fix), `watch:autorun-gate`; unit tests for the matchers + migration-path detection; `scripts/test-watch.sh` autorun-gate case.
-- End-to-end canary on a throwaway repo with a local bare remote: a migration branch is **denied** (5d); a clean branch goes green → merge → deploy → **Codemagic tag pushed**, zero human.
+- End-to-end canary on a throwaway repo with a local bare remote: a migration branch is **denied** (5d); a clean branch goes green → merge → deploy → **pushd tag pushed**, zero human.
