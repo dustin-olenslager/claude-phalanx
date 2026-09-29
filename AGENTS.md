@@ -141,6 +141,11 @@ model at all:
 
 - **`.claude/settings.json`** is a real gate, but it binds **only Claude Code**. It does nothing to a
   Cursor, Codex, Copilot, Windsurf, Cline, or aider agent.
+- **`skills/token-discipline`** — this repo is the canonical home of the cross-tool token-discipline
+  skill (input loading, output compression, tool design, subagent isolation, multi-session bridge
+  files), folded in from the retired `joeybuilt-official/agent-rules` repo which no longer exists.
+  It installs like every other skill (`install.sh` copies all of `skills/<name>/SKILL.md`,
+  `uninstall.sh` removes it).
 - For every other tool, the guardrails above are **doc-level MUST-NOT prose** — always in context (the
   `MIRROR` block is mirrored into each tool's native rules file), but advisory. A determined or
   confused agent can still run the command.

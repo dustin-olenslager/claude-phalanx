@@ -8,7 +8,9 @@ always-on and enforced by hooks, so they survive every session and apply to suba
 
 **Core pillars**: hard-gated pipeline (no code before a plan, no commit before a verify);
 always-on standards enforced by hooks, not memory; adversarial review that demands a working
-diff per finding; token economy — only the active phase's team is on the clock.
+diff per finding; token economy — only the active phase's team is on the clock. (This repo is
+also the canonical home of the cross-tool `token-discipline` skill under `skills/`, folded in
+from the retired `joeybuilt-official/agent-rules` repo.)
 
 ## Tech Stack
 

@@ -25,7 +25,7 @@ discipline doesn't depend on the model remembering — it's wired into the harne
 - 🗡️ **Adversarial review** — `edge-hunter` finds failure modes, `adversary-review` grades and demands a working diff per finding.
 - 🤖 **No-babysit autonomy** — a request seeds itself as a task; a supervisor relaunches fresh `claude -p` passes across the context ceiling. No human ever runs `/clear`.
 - 🔒 **Leak guard + secret gates** — secrets blocked at write-time and push-time; scoped so your private repos are never touched.
-- 🪙 **Token discipline** — only the active phase's team is "on the clock"; dormant specialists cost nothing.
+- 🪙 **Token discipline** — only the active phase's team is "on the clock"; dormant specialists cost nothing. The `token-discipline` skill (input loading, output compression, tool design, subagent isolation, multi-session bridge files) is vendored here — this repo is its canonical home (folded in from `joeybuilt-official/agent-rules`).
 
 A *phalanx* is a disciplined formation of specialists advancing in lockstep. That's
 the model: you operate as a full org of world-class specialists, and at any moment
@@ -482,7 +482,8 @@ install.sh / install.ps1 / uninstall.sh
 PROMPT.md                        operating prompt (paste into Claude Code)
 claude-md/sections.md            §0–§16 source of truth
 skills/<name>/SKILL.md           caveman, effect-ts, clean-architecture, caveman-{commit,review,stats},
-                                 edge-hunter, adversary-review, optimize-loop, maintain-mode, arch-enforce
+                                 edge-hunter, adversary-review, optimize-loop, maintain-mode, arch-enforce,
+                                 token-discipline
 hooks/anchors/*.sh               caveman, app-pipeline, ts-arch, phase
 hooks/gates/*.js                 pipeline, effect-ca, secret, loop-integrity,
                                  context-budget, work-autostart/intent/respawn
