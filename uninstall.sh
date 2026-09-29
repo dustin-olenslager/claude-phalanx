@@ -9,7 +9,7 @@ CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 echo "==> removing skills"
 for s in caveman caveman-commit caveman-review caveman-stats effect-ts \
          clean-architecture edge-hunter adversary-review optimize-loop \
-         maintain-mode arch-enforce; do
+         maintain-mode arch-enforce token-discipline; do
   rm -rf "$CLAUDE_DIR/skills/$s"
 done
 
