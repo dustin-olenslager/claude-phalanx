@@ -51,3 +51,47 @@ allows a compliant repo.
   an agent from even discovering what state the repo is in.
 - **Escape hatches are declared, not silent:** `PANOPLY_GATE_OFF=1` (this gate) and `PANOPLY_OFF=1`
   (the doctor). An agent that uses one should say so, so the exception is reviewed rather than assumed.
+
+## `caveman_anchor.py` — the caveman reply budget
+
+**What it enforces:** the budget that `hooks/anchors/caveman-anchor.sh` installs for Claude Code
+(already always-on there via `settings/fragment.json`), put in front of a Hermes agent AND its
+`delegate_task` subagents. ≤40 words / ≤4 lines by default; exact code, paths, SHAs, commands, errors;
+full English for safety confirmations, plan/PR bodies, code comments and handoffs.
+
+**Why `pre_llm_call` and not a skill:** `skills.auto_load` is skipped for subagents entirely, so a skill
+only applies when the agent chooses to load it — and the point of an anchor is that the budget applies
+when nobody remembered to ask. `pre_llm_call` is process-global, so it reaches parent and child alike.
+
+The gate above uses `pre_tool_call` because its job is to **block**; a cognitive budget cannot be
+blocked, only put in front of the agent. That is the whole difference between the two adapters.
+
+### Install
+
+```sh
+mkdir -p ~/.hermes/plugins/caveman
+cp adapters/gates/hermes/caveman_anchor.py ~/.hermes/plugins/caveman/__init__.py
+printf 'name: caveman\nversion: "1.0.0"\ndescription: caveman reply budget\nprovides_hooks:\n  - pre_llm_call\n' \
+  > ~/.hermes/plugins/caveman/plugin.yaml
+hermes plugins enable caveman
+```
+
+### Verify
+
+```sh
+python3 adapters/gates/hermes/test_caveman_anchor.py
+```
+
+16 assertions: injects the budget on a normal turn; carries the exactness and exemption rules; both OFF
+switches (`CAVEMAN_OFF=1`, and `stop caveman`/`normal mode` in the user's message) work; `caveman` alone
+**re-anchors rather than disabling**; every message shape is read; and — the property that matters most —
+it **fails open** on malformed payloads, because a raising callback on this channel would cost the turn.
+
+## Deliberate design choices
+
+- **Fails open, always.** A budget that occasionally fails to inject costs tokens; one that throws costs
+  the conversation.
+- **Exemptions are load-bearing.** Compressing a safety confirmation to save tokens is the one trade
+  this must never make.
+- **The override is the user's.** `stop caveman` / `normal mode` disables it for that turn, matching
+  `skills/caveman/SKILL.md`.
