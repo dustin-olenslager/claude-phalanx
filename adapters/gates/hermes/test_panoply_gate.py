@@ -8,7 +8,7 @@ This asserts both directions, plus the escape hatches, by calling _on_pre_tool_c
 import importlib.util, os, subprocess, sys, tempfile, shutil
 from pathlib import Path
 
-PLUGIN = "/opt/data/plugins/panoply-gate/__init__.py"
+PLUGIN = Path(__file__).resolve().parent / "panoply_gate.py"
 spec = importlib.util.spec_from_file_location("panoply_gate", PLUGIN)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
